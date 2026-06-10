@@ -1,0 +1,4114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Inventory Manager - Dashboard</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            app: ['Inter', 'system-ui', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    body {
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .page-enter {
+      animation: pageEnter 0.25s ease-out;
+    }
+
+    .dock-enter {
+      animation: dockEnter 0.25s ease-out;
+    }
+
+    .thin-scroll::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    .thin-scroll::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .thin-scroll::-webkit-scrollbar-thumb {
+      background: rgba(100, 116, 139, 0.35);
+      border-radius: 999px;
+    }
+
+    .thin-scroll::-webkit-scrollbar-thumb:hover {
+      background: rgba(100, 116, 139, 0.55);
+    }
+
+    @keyframes pageEnter {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes dockEnter {
+      from {
+        opacity: 0;
+        transform: translate(-50%, 16px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-slate-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+
+    const STORAGE_KEYS = {
+      TOKEN: 'inventory_manager_token',
+      USER: 'inventory_manager_user',
+      THEME: 'inventory_manager_theme',
+      DASHBOARD_CACHE: 'inventory_manager_dashboard_cache',
+      BRANCH_CACHE: 'inventory_manager_branch_cache',
+      SETTINGS_CACHE: 'inventory_manager_settings_cache',
+      INVENTORY_CACHE_PREFIX: 'inventory_manager_inventory_cache_'
+    };
+
+    const CACHE_TTL_MS = 10 * 60 * 1000;
+
+    const STATUS_OPTIONS = ['Planned', 'Pending', 'Purchased', 'Cancelled'];
+    const GENERAL_STATUS_OPTIONS = ['Active', 'Inactive'];
+    const BRANCH_STATUS_OPTIONS = ['Active', 'Inactive'];
+
+    const PHOTO_ACCEPT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+    const PHOTO_MAX_COMPRESSED_BYTES = 2 * 1024 * 1024;
+    const PHOTO_COMPRESSION_ATTEMPTS = [
+      { maxWidth: 900, maxHeight: 900, quality: 0.62 },
+      { maxWidth: 720, maxHeight: 720, quality: 0.55 },
+      { maxWidth: 600, maxHeight: 600, quality: 0.48 }
+    ];
+
+    const EMPTY_INVENTORY_FORM = {
+      checkId: '',
+      branchId: '',
+      branchName: '',
+      itemName: '',
+      category: '',
+      purchaseDate: getTodayDate(),
+      quantity: '',
+      unit: '',
+      estimatedPrice: '',
+      actualPrice: '',
+      vendor: '',
+      photoUrl: '',
+      photoFileId: '',
+      photoFileName: '',
+      photoMimeType: '',
+      photoSizeBytes: 0,
+      photoViewUrl: '',
+      photoUpload: null,
+      photoPreviewUrl: '',
+      photoSizeLabel: '',
+      status: 'Planned',
+      notes: ''
+    };
+
+    const EMPTY_BRANCH_FORM = {
+      branchId: '',
+      branchName: '',
+      address: '',
+      status: 'Active'
+    };
+
+    const EMPTY_CATEGORY_FORM = {
+      categoryId: '',
+      categoryName: '',
+      status: 'Active'
+    };
+
+    const EMPTY_UNIT_FORM = {
+      unitId: '',
+      unitName: '',
+      status: 'Active'
+    };
+
+    // Paste your new Google Apps Script Web App URL here after you deploy it
+    const API_URL = "https://script.google.com/macros/s/AKfycbwRbMy3R5nkaGy5GbER-5btpH88HJdNMHtkxMpuOYIvmwp9nakpD835o9buQW7F4Umo/exec"; 
+
+    async function gasRun(functionName, ...args) {
+      try {
+        const response = await fetch(API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain', 
+          },
+          body: JSON.stringify({ functionName, args }),
+          redirect: 'follow'
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        console.error("API Error:", error);
+        throw error;
+      }
+    }
+
+    function App() {
+      const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME) || 'light';
+
+      const [theme, setTheme] = useState(savedTheme);
+      const [activeDock, setActiveDock] = useState('checker');
+
+      const [appConfig, setAppConfig] = useState({
+        name: 'Inventory Manager',
+        version: '1.8.0',
+        loginUrl: ''
+      });
+
+      const [state, setState] = useState({
+        loading: true,
+        saving: false,
+        deleting: false,
+        refreshing: false,
+        fromCache: false,
+        token: '',
+        user: null,
+        branches: [],
+        inventoryItems: [],
+        categories: [],
+        units: [],
+        settingsSummary: null,
+        summary: null,
+        error: '',
+        toast: ''
+      });
+
+      const [viewMode, setViewMode] = useState('board');
+      const [selectedMonth, setSelectedMonth] = useState(getCurrentMonth());
+      const [selectedBranchId, setSelectedBranchId] = useState('ALL');
+
+      const [inventoryFormOpen, setInventoryFormOpen] = useState(false);
+      const [inventoryFormMode, setInventoryFormMode] = useState('create');
+      const [inventoryForm, setInventoryForm] = useState(EMPTY_INVENTORY_FORM);
+
+      const [detailOpen, setDetailOpen] = useState(false);
+      const [selectedDetailItem, setSelectedDetailItem] = useState(null);
+
+      const [branchFormOpen, setBranchFormOpen] = useState(false);
+      const [branchFormMode, setBranchFormMode] = useState('create');
+      const [branchForm, setBranchForm] = useState(EMPTY_BRANCH_FORM);
+
+      const [categoryFormOpen, setCategoryFormOpen] = useState(false);
+      const [categoryFormMode, setCategoryFormMode] = useState('create');
+      const [categoryForm, setCategoryForm] = useState(EMPTY_CATEGORY_FORM);
+
+      const [unitFormOpen, setUnitFormOpen] = useState(false);
+      const [unitFormMode, setUnitFormMode] = useState('create');
+      const [unitForm, setUnitForm] = useState(EMPTY_UNIT_FORM);
+
+      const [calendarSelectedDate, setCalendarSelectedDate] = useState(getTodayDate());
+
+      useEffect(() => {
+        applyTheme(theme);
+      }, [theme]);
+
+      useEffect(() => {
+        bootDashboard();
+      }, []);
+
+      useEffect(() => {
+        if (!state.loading && state.token) {
+          refreshInventoryData({ useCacheFirst: true });
+        }
+      }, [selectedMonth, selectedBranchId]);
+
+      function applyTheme(selectedTheme) {
+        if (selectedTheme === 'dark') {
+          document.documentElement.classList.add('dark');
+          document.body.className = 'bg-slate-950';
+        } else {
+          document.documentElement.classList.remove('dark');
+          document.body.className = 'bg-slate-100';
+        }
+
+        localStorage.setItem(STORAGE_KEYS.THEME, selectedTheme);
+      }
+
+      function toggleTheme() {
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+      }
+
+      function isManagementUser(user) {
+        return user &&
+          String(user.role || '').trim().toLowerCase() === 'management' &&
+          String(user.branchId || '').trim().toUpperCase() === 'ALL';
+      }
+
+      function isAdminUser(user) {
+        return user &&
+          String(user.role || '').trim().toLowerCase() === 'admin' &&
+          String(user.branchId || '').trim().toUpperCase() !== 'ALL';
+      }
+
+      async function bootDashboard() {
+        try {
+          const configResponse = await gasRun('getAppConfig');
+
+          if (configResponse && configResponse.success) {
+            setAppConfig(configResponse.app);
+          }
+
+          const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
+
+          if (!token) {
+            redirectToLogin(configResponse);
+            return;
+          }
+
+          const sessionResponse = await gasRun('validateSession', token);
+
+          if (!sessionResponse || !sessionResponse.success) {
+            clearStoredSession();
+            clearAllCache();
+            redirectToLogin(configResponse);
+            return;
+          }
+
+          const sessionUser = sessionResponse.user;
+          const isAdmin = isAdminUser(sessionUser);
+
+          if (isAdmin) {
+            setSelectedBranchId(sessionUser.branchId);
+          }
+
+          const cachedDashboard = readCache(STORAGE_KEYS.DASHBOARD_CACHE);
+          const cacheMatchesSession = cachedDashboard &&
+            cachedDashboard.user &&
+            isSameSessionUser(cachedDashboard.user, sessionUser);
+
+          if (cacheMatchesSession) {
+            const cachedUser = cachedDashboard.user;
+            const cachedIsAdmin = isAdminUser(cachedUser);
+
+            setState(prev => ({
+              ...prev,
+              loading: false,
+              fromCache: true,
+              token,
+              user: cachedUser,
+              branches: cachedDashboard.branches || [],
+              inventoryItems: normalizeInventoryItems(cachedDashboard.inventoryChecker || []),
+              categories: cachedDashboard.categories || [],
+              units: cachedDashboard.units || [],
+              settingsSummary: cachedDashboard.settingsSummary || null,
+              summary: cachedDashboard.summary || null,
+              error: ''
+            }));
+
+            if (cachedIsAdmin) {
+              setSelectedBranchId(cachedUser.branchId);
+            }
+          }
+
+          const dashboardResponse = await gasRun('getDashboardData', token);
+
+          if (!dashboardResponse || !dashboardResponse.success) {
+            if (!cacheMatchesSession) {
+              setState(prev => ({
+                ...prev,
+                loading: false,
+                token,
+                user: sessionResponse.user,
+                error: dashboardResponse ? dashboardResponse.message : 'Failed to load dashboard data.'
+              }));
+            }
+            return;
+          }
+
+          const settingsResponse = await gasRun('getSettingsData', token);
+
+          const categories = settingsResponse && settingsResponse.success
+            ? settingsResponse.categories || []
+            : dashboardResponse.categories || [];
+
+          const units = settingsResponse && settingsResponse.success
+            ? settingsResponse.units || []
+            : dashboardResponse.units || [];
+
+          const settingsSummary = settingsResponse && settingsResponse.success
+            ? settingsResponse.summary || null
+            : null;
+
+          const fullDashboardData = {
+            ...dashboardResponse,
+            inventoryChecker: normalizeInventoryItems(dashboardResponse.inventoryChecker || []),
+            categories,
+            units,
+            settingsSummary
+          };
+
+          localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(dashboardResponse.user));
+          writeCache(STORAGE_KEYS.DASHBOARD_CACHE, fullDashboardData);
+          writeCache(STORAGE_KEYS.BRANCH_CACHE, {
+            branches: dashboardResponse.branches || []
+          });
+          writeCache(STORAGE_KEYS.SETTINGS_CACHE, {
+            categories,
+            units,
+            summary: settingsSummary
+          });
+
+          const user = dashboardResponse.user;
+          const userIsAdmin = isAdminUser(user);
+
+          setState({
+            loading: false,
+            saving: false,
+            deleting: false,
+            refreshing: false,
+            fromCache: false,
+            token,
+            user: user,
+            branches: dashboardResponse.branches || [],
+            inventoryItems: normalizeInventoryItems(dashboardResponse.inventoryChecker || []),
+            categories,
+            units,
+            settingsSummary,
+            summary: dashboardResponse.summary || null,
+            error: '',
+            toast: ''
+          });
+
+          if (userIsAdmin) {
+            setSelectedBranchId(user.branchId);
+          }
+
+        } catch (error) {
+          const cachedDashboard = readCache(STORAGE_KEYS.DASHBOARD_CACHE);
+          const storedUser = readStoredUser();
+
+          if (
+            cachedDashboard &&
+            cachedDashboard.user &&
+            storedUser &&
+            isSameSessionUser(cachedDashboard.user, storedUser)
+          ) {
+            setState(prev => ({
+              ...prev,
+              loading: false,
+              fromCache: true,
+              token: localStorage.getItem(STORAGE_KEYS.TOKEN) || '',
+              user: cachedDashboard.user,
+              branches: cachedDashboard.branches || [],
+              inventoryItems: normalizeInventoryItems(cachedDashboard.inventoryChecker || []),
+              categories: cachedDashboard.categories || [],
+              units: cachedDashboard.units || [],
+              settingsSummary: cachedDashboard.settingsSummary || null,
+              summary: cachedDashboard.summary || null,
+              error: ''
+            }));
+
+            if (isAdminUser(cachedDashboard.user)) {
+              setSelectedBranchId(cachedDashboard.user.branchId);
+            }
+
+            return;
+          }
+
+          clearStoredSession();
+
+          setState(prev => ({
+            ...prev,
+            loading: false,
+            error: error.message || 'Failed to open dashboard.'
+          }));
+        }
+      }
+
+      async function refreshAllData() {
+        if (!state.token) return;
+
+        setState(prev => ({
+          ...prev,
+          refreshing: true
+        }));
+
+        try {
+          const dashboardResponse = await gasRun('getDashboardData', state.token);
+
+          if (!dashboardResponse || !dashboardResponse.success) {
+            showToast(dashboardResponse ? dashboardResponse.message : 'Failed to refresh dashboard.');
+            return;
+          }
+
+          const settingsResponse = await gasRun('getSettingsData', state.token);
+
+          const categories = settingsResponse && settingsResponse.success
+            ? settingsResponse.categories || []
+            : dashboardResponse.categories || state.categories;
+
+          const units = settingsResponse && settingsResponse.success
+            ? settingsResponse.units || []
+            : dashboardResponse.units || state.units;
+
+          const settingsSummary = settingsResponse && settingsResponse.success
+            ? settingsResponse.summary || null
+            : state.settingsSummary;
+
+          const fullDashboardData = {
+            ...dashboardResponse,
+            inventoryChecker: normalizeInventoryItems(dashboardResponse.inventoryChecker || []),
+            categories,
+            units,
+            settingsSummary
+          };
+
+          writeCache(STORAGE_KEYS.DASHBOARD_CACHE, fullDashboardData);
+          writeCache(STORAGE_KEYS.BRANCH_CACHE, {
+            branches: dashboardResponse.branches || []
+          });
+          writeCache(STORAGE_KEYS.SETTINGS_CACHE, {
+            categories,
+            units,
+            summary: settingsSummary
+          });
+
+          setState(prev => ({
+            ...prev,
+            refreshing: false,
+            fromCache: false,
+            user: dashboardResponse.user,
+            branches: dashboardResponse.branches || [],
+            inventoryItems: normalizeInventoryItems(dashboardResponse.inventoryChecker || []),
+            categories,
+            units,
+            settingsSummary,
+            summary: dashboardResponse.summary || prev.summary
+          }));
+
+          if (isAdminUser(dashboardResponse.user)) {
+            setSelectedBranchId(dashboardResponse.user.branchId);
+          }
+
+          showToast('Dashboard refreshed.');
+
+        } catch (error) {
+          showToast(error.message || 'Failed to refresh dashboard.');
+
+          setState(prev => ({
+            ...prev,
+            refreshing: false
+          }));
+        }
+      }
+
+      async function refreshInventoryData(options = {}) {
+        if (!state.token) return;
+
+        const effectiveBranchId = isAdminUser(state.user)
+          ? state.user.branchId
+          : selectedBranchId;
+
+        const cacheKey = getInventoryCacheKey(selectedMonth, effectiveBranchId);
+
+        if (options.useCacheFirst) {
+          const cachedInventory = readCache(cacheKey);
+
+          if (cachedInventory && cachedInventory.items) {
+            setInventoryItemsFromResponse(cachedInventory.items, cachedInventory.summary);
+          }
+        }
+
+        setState(prev => ({
+          ...prev,
+          refreshing: true
+        }));
+
+        try {
+          const response = await gasRun('getInventoryCheckerData', state.token, {
+            month: selectedMonth,
+            branchId: effectiveBranchId !== 'ALL' ? effectiveBranchId : ''
+          });
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Failed to reload inventory data.');
+            return;
+          }
+
+          writeCache(cacheKey, {
+            items: normalizeInventoryItems(response.items || []),
+            summary: response.summary || null
+          });
+
+          setInventoryItemsFromResponse(normalizeInventoryItems(response.items || []), response.summary);
+
+          setState(prev => ({
+            ...prev,
+            categories: response.categories || prev.categories,
+            units: response.units || prev.units
+          }));
+
+        } catch (error) {
+          showToast(error.message || 'Failed to reload inventory data.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            refreshing: false
+          }));
+        }
+      }
+
+      async function refreshSettingsData(options = {}) {
+        if (!state.token) return;
+
+        if (options.useCacheFirst) {
+          const cachedSettings = readCache(STORAGE_KEYS.SETTINGS_CACHE);
+
+          if (cachedSettings) {
+            setState(prev => ({
+              ...prev,
+              categories: cachedSettings.categories || [],
+              units: cachedSettings.units || [],
+              settingsSummary: cachedSettings.summary || null
+            }));
+          }
+        }
+
+        setState(prev => ({
+          ...prev,
+          refreshing: true
+        }));
+
+        try {
+          const response = await gasRun('getSettingsData', state.token);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Failed to reload settings.');
+            return;
+          }
+
+          writeCache(STORAGE_KEYS.SETTINGS_CACHE, {
+            categories: response.categories || [],
+            units: response.units || [],
+            summary: response.summary || null
+          });
+
+          setState(prev => ({
+            ...prev,
+            categories: response.categories || [],
+            units: response.units || [],
+            settingsSummary: response.summary || null
+          }));
+
+        } catch (error) {
+          showToast(error.message || 'Failed to reload settings.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            refreshing: false
+          }));
+        }
+      }
+
+      function setInventoryItemsFromResponse(items, summary) {
+        const normalizedItems = normalizeInventoryItems(items || []);
+
+        setState(prev => ({
+          ...prev,
+          inventoryItems: normalizedItems,
+          summary: {
+            ...(prev.summary || {}),
+            totalInventoryChecks: summary ? summary.total : normalizedItems.length,
+            plannedChecks: summary ? summary.planned : countStatus(normalizedItems, 'Planned'),
+            pendingChecks: summary ? summary.pending : countStatus(normalizedItems, 'Pending'),
+            purchasedChecks: summary ? summary.purchased : countStatus(normalizedItems, 'Purchased'),
+            cancelledChecks: summary ? summary.cancelled : countStatus(normalizedItems, 'Cancelled')
+          }
+        }));
+      }
+
+      function redirectToLogin(configResponse) {
+        const loginUrl = configResponse &&
+          configResponse.success &&
+          configResponse.app.loginUrl
+          ? configResponse.app.loginUrl
+          : 'index.html'; // Changed to point directly to physical file
+
+        window.top.location.href = loginUrl;
+      }
+
+      async function handleLogout() {
+        const token = state.token;
+
+        clearStoredSession();
+        clearAllCache();
+
+        try {
+          const response = await gasRun('logout', token);
+          window.top.location.href = response.redirectUrl || appConfig.loginUrl || 'index.html';
+        } catch (error) {
+          window.top.location.href = appConfig.loginUrl || 'index.html';
+        }
+      }
+
+      function getDefaultBranchForInventoryForm() {
+        if (isAdminUser(state.user)) {
+          return {
+            branchId: state.user.branchId,
+            branchName: state.user.branchName
+          };
+        }
+
+        const activeBranch = state.branches.find(branch => branch.Status === 'Active');
+        const branch = activeBranch || state.branches[0];
+
+        if (branch) {
+          return {
+            branchId: branch.BranchID,
+            branchName: branch.BranchName
+          };
+        }
+
+        return {
+          branchId: '',
+          branchName: ''
+        };
+      }
+
+      function getDefaultCategoryName() {
+        const activeCategory = state.categories.find(category => category.Status === 'Active');
+        return activeCategory ? activeCategory.CategoryName : '';
+      }
+
+      function getDefaultUnitName() {
+        const activeUnit = state.units.find(unit => unit.Status === 'Active');
+        return activeUnit ? activeUnit.UnitName : '';
+      }
+
+      function openCreateInventoryForm(dateValue) {
+        const defaultBranch = getDefaultBranchForInventoryForm();
+
+        setInventoryForm({
+          ...EMPTY_INVENTORY_FORM,
+          purchaseDate: dateValue || calendarSelectedDate || getTodayDate(),
+          branchId: defaultBranch.branchId,
+          branchName: defaultBranch.branchName,
+          category: getDefaultCategoryName(),
+          unit: getDefaultUnitName()
+        });
+
+        setInventoryFormMode('create');
+        setInventoryFormOpen(true);
+      }
+
+      function openEditInventoryForm(item) {
+        const normalizedItem = normalizeInventoryItem(item);
+
+        setInventoryForm({
+          checkId: normalizedItem.CheckID,
+          branchId: normalizedItem.BranchID,
+          branchName: normalizedItem.BranchName,
+          itemName: normalizedItem.ItemName,
+          category: normalizedItem.Category,
+          purchaseDate: normalizedItem.PurchaseDate || getTodayDate(),
+          quantity: normalizedItem.Quantity || '',
+          unit: normalizedItem.Unit,
+          estimatedPrice: normalizedItem.EstimatedPrice || '',
+          actualPrice: normalizedItem.ActualPrice || '',
+          vendor: normalizedItem.Vendor,
+          photoUrl: normalizedItem.PhotoURL,
+          photoFileId: normalizedItem.PhotoFileID,
+          photoFileName: normalizedItem.PhotoFileName,
+          photoMimeType: normalizedItem.PhotoMimeType,
+          photoSizeBytes: normalizedItem.PhotoSizeBytes || 0,
+          photoViewUrl: normalizedItem.PhotoViewURL,
+          photoUpload: null,
+          photoPreviewUrl: '',
+          photoSizeLabel: normalizedItem.PhotoSizeBytes ? formatBytes(normalizedItem.PhotoSizeBytes) : '',
+          status: normalizedItem.Status || 'Planned',
+          notes: normalizedItem.Notes
+        });
+
+        setInventoryFormMode('edit');
+        setInventoryFormOpen(true);
+      }
+
+      function closeInventoryForm() {
+        setInventoryFormOpen(false);
+        setInventoryForm(EMPTY_INVENTORY_FORM);
+        setInventoryFormMode('create');
+      }
+
+      function updateInventoryForm(field, value) {
+        setInventoryForm(prev => ({
+          ...prev,
+          [field]: value
+        }));
+      }
+
+      function handlePhotoSelected(photoData) {
+        setInventoryForm(prev => ({
+          ...prev,
+          photoUpload: {
+            base64Data: photoData.base64Data,
+            mimeType: photoData.mimeType,
+            fileName: photoData.fileName,
+            sizeBytes: photoData.sizeBytes
+          },
+          photoPreviewUrl: photoData.previewUrl,
+          photoFileId: '',
+          photoFileName: photoData.fileName,
+          photoMimeType: photoData.mimeType,
+          photoSizeBytes: photoData.sizeBytes,
+          photoViewUrl: '',
+          photoSizeLabel: formatBytes(photoData.sizeBytes)
+        }));
+      }
+
+      function handlePhotoRemoved() {
+        setInventoryForm(prev => ({
+          ...prev,
+          photoUrl: '',
+          photoFileId: '',
+          photoFileName: '',
+          photoMimeType: '',
+          photoSizeBytes: 0,
+          photoViewUrl: '',
+          photoUpload: null,
+          photoPreviewUrl: '',
+          photoSizeLabel: ''
+        }));
+      }
+
+      function openDetail(item) {
+        setSelectedDetailItem(item);
+        setDetailOpen(true);
+      }
+
+      function closeDetail() {
+        setDetailOpen(false);
+        setSelectedDetailItem(null);
+      }
+
+      function handleDetailEdit(item) {
+        closeDetail();
+        openEditInventoryForm(item);
+      }
+
+      async function handleSubmitInventoryForm(event) {
+        event.preventDefault();
+
+        setState(prev => ({
+          ...prev,
+          saving: true
+        }));
+
+        try {
+          let photoFields = {
+            photoUrl: inventoryForm.photoUrl,
+            photoFileId: inventoryForm.photoFileId,
+            photoFileName: inventoryForm.photoFileName,
+            photoMimeType: inventoryForm.photoMimeType,
+            photoSizeBytes: inventoryForm.photoSizeBytes,
+            photoViewUrl: inventoryForm.photoViewUrl
+          };
+
+          if (inventoryForm.photoUpload) {
+            showToast('Uploading photo to Google Drive...');
+
+            const uploadResponse = await gasRun('uploadInventoryPhoto', state.token, {
+              base64Data: inventoryForm.photoUpload.base64Data,
+              mimeType: inventoryForm.photoUpload.mimeType,
+              fileName: inventoryForm.photoUpload.fileName,
+              branchId: inventoryForm.branchId,
+              branchName: inventoryForm.branchName,
+              itemName: inventoryForm.itemName,
+              checkId: inventoryFormMode === 'edit' ? inventoryForm.checkId : ''
+            });
+
+            if (!uploadResponse || !uploadResponse.success) {
+              showToast(uploadResponse ? uploadResponse.message : 'Photo upload failed.');
+              return;
+            }
+
+            photoFields = {
+              photoUrl: uploadResponse.photoUrl || '',
+              photoFileId: uploadResponse.photoFileId || '',
+              photoFileName: uploadResponse.photoFileName || inventoryForm.photoFileName || '',
+              photoMimeType: uploadResponse.photoMimeType || inventoryForm.photoMimeType || '',
+              photoSizeBytes: uploadResponse.photoSizeBytes || inventoryForm.photoSizeBytes || 0,
+              photoViewUrl: uploadResponse.photoViewUrl || ''
+            };
+
+            if (uploadResponse.photoShareError) {
+              showToast(uploadResponse.photoShareError);
+            } else {
+              showToast('Photo uploaded. Saving item...');
+            }
+          }
+
+          const payload = {
+            branchId: inventoryForm.branchId,
+            branchName: inventoryForm.branchName,
+            itemName: inventoryForm.itemName,
+            category: inventoryForm.category,
+            purchaseDate: inventoryForm.purchaseDate,
+            quantity: inventoryForm.quantity,
+            unit: inventoryForm.unit,
+            estimatedPrice: inventoryForm.estimatedPrice,
+            actualPrice: inventoryForm.actualPrice,
+            vendor: inventoryForm.vendor,
+            photoUrl: photoFields.photoUrl,
+            photoFileId: photoFields.photoFileId,
+            photoFileName: photoFields.photoFileName,
+            photoMimeType: photoFields.photoMimeType,
+            photoSizeBytes: photoFields.photoSizeBytes,
+            photoViewUrl: photoFields.photoViewUrl,
+            status: inventoryForm.status,
+            notes: inventoryForm.notes
+          };
+
+          const response = inventoryFormMode === 'create'
+            ? await gasRun('createInventoryCheck', state.token, payload)
+            : await gasRun('updateInventoryCheck', state.token, inventoryForm.checkId, payload);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Save failed.');
+            return;
+          }
+
+          showToast(inventoryForm.photoUpload ? 'Saved with Drive photo.' : (response.message || 'Saved.'));
+
+          if (response.items) {
+            const nextItems = normalizeInventoryItems(response.items);
+
+            setState(prev => ({
+              ...prev,
+              inventoryItems: nextItems,
+              categories: response.categories || prev.categories,
+              units: response.units || prev.units
+            }));
+
+            syncInventoryCaches(nextItems);
+
+          } else if (response.item) {
+            upsertInventoryItem(normalizeInventoryItem(response.item));
+          }
+
+          closeInventoryForm();
+          await refreshInventoryData();
+
+        } catch (error) {
+          showToast(error.message || 'Save failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            saving: false
+          }));
+        }
+      }
+
+      function upsertInventoryItem(item) {
+        item = normalizeInventoryItem(item);
+
+        setState(prev => {
+          const existingIndex = prev.inventoryItems.findIndex(row => row.CheckID === item.CheckID);
+          let nextItems = [];
+
+          if (existingIndex >= 0) {
+            nextItems = prev.inventoryItems.map(row => row.CheckID === item.CheckID ? item : row);
+          } else {
+            nextItems = [item, ...prev.inventoryItems];
+          }
+
+          syncInventoryCaches(nextItems);
+
+          return {
+            ...prev,
+            inventoryItems: nextItems
+          };
+        });
+      }
+
+      async function handleDeleteInventory(item) {
+        const confirmed = window.confirm('Delete this inventory checker item?');
+
+        if (!confirmed) return;
+
+        setState(prev => ({
+          ...prev,
+          deleting: true
+        }));
+
+        try {
+          const response = await gasRun('deleteInventoryCheck', state.token, item.CheckID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Delete failed.');
+            return;
+          }
+
+          showToast(response.message || 'Deleted.');
+
+          if (response.items) {
+            const nextItems = normalizeInventoryItems(response.items);
+
+            setState(prev => ({
+              ...prev,
+              inventoryItems: nextItems
+            }));
+            syncInventoryCaches(nextItems);
+          } else {
+            setState(prev => {
+              const nextItems = prev.inventoryItems.filter(row => row.CheckID !== item.CheckID);
+              syncInventoryCaches(nextItems);
+
+              return {
+                ...prev,
+                inventoryItems: nextItems
+              };
+            });
+          }
+
+          closeDetail();
+          await refreshInventoryData();
+
+        } catch (error) {
+          showToast(error.message || 'Delete failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            deleting: false
+          }));
+        }
+      }
+
+      async function handleQuickInventoryStatus(item, status) {
+        try {
+          const response = await gasRun('updateInventoryCheckStatus', state.token, item.CheckID, status);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Failed to update status.');
+            return;
+          }
+
+          showToast('Status updated.');
+
+          if (response.items) {
+            const nextItems = normalizeInventoryItems(response.items);
+
+            setState(prev => ({
+              ...prev,
+              inventoryItems: nextItems,
+              categories: response.categories || prev.categories,
+              units: response.units || prev.units
+            }));
+            syncInventoryCaches(nextItems);
+          } else if (response.item) {
+            upsertInventoryItem(normalizeInventoryItem(response.item));
+          }
+
+          closeDetail();
+          await refreshInventoryData();
+
+        } catch (error) {
+          showToast(error.message || 'Failed to update status.');
+        }
+      }
+
+      function syncInventoryCaches(items) {
+        const effectiveBranchId = isAdminUser(state.user)
+          ? state.user.branchId
+          : selectedBranchId;
+
+        const currentKey = getInventoryCacheKey(selectedMonth, effectiveBranchId);
+        const currentItems = (items || []).filter(item => {
+          const itemMonth = String(item.PurchaseDate || '').substring(0, 7);
+          const sameMonth = selectedMonth ? itemMonth === selectedMonth : true;
+          const sameBranch = effectiveBranchId === 'ALL' || item.BranchID === effectiveBranchId;
+
+          return sameMonth && sameBranch;
+        });
+
+        writeCache(currentKey, {
+          items: currentItems,
+          summary: buildLocalInventorySummary(currentItems)
+        });
+      }
+
+      function openCreateBranchForm() {
+        setBranchForm({
+          ...EMPTY_BRANCH_FORM,
+          branchId: '',
+          branchName: '',
+          address: '',
+          status: 'Active'
+        });
+
+        setBranchFormMode('create');
+        setBranchFormOpen(true);
+      }
+
+      function openEditBranchForm(branch) {
+        setBranchForm({
+          branchId: branch.BranchID,
+          branchName: branch.BranchName,
+          address: branch.Address,
+          status: branch.Status || 'Active'
+        });
+
+        setBranchFormMode('edit');
+        setBranchFormOpen(true);
+      }
+
+      function closeBranchForm() {
+        setBranchFormOpen(false);
+        setBranchForm(EMPTY_BRANCH_FORM);
+        setBranchFormMode('create');
+      }
+
+      function updateBranchForm(field, value) {
+        setBranchForm(prev => ({
+          ...prev,
+          [field]: value
+        }));
+      }
+
+      async function handleSubmitBranchForm(event) {
+        event.preventDefault();
+
+        setState(prev => ({
+          ...prev,
+          saving: true
+        }));
+
+        try {
+          const payload = {
+            branchId: branchForm.branchId,
+            branchName: branchForm.branchName,
+            address: branchForm.address,
+            status: branchForm.status
+          };
+
+          const response = branchFormMode === 'create'
+            ? await gasRun('createBranch', state.token, payload)
+            : await gasRun('updateBranch', state.token, branchForm.branchId, payload);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Save branch failed.');
+            return;
+          }
+
+          showToast(response.message || 'Branch saved.');
+
+          const nextBranches = response.branches || state.branches;
+
+          writeCache(STORAGE_KEYS.BRANCH_CACHE, {
+            branches: nextBranches
+          });
+
+          setState(prev => ({
+            ...prev,
+            branches: nextBranches
+          }));
+
+          closeBranchForm();
+          await refreshAllData();
+
+        } catch (error) {
+          showToast(error.message || 'Save branch failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            saving: false
+          }));
+        }
+      }
+
+      async function handleDeleteBranch(branch) {
+        const confirmed = window.confirm('Delete this branch? If branch already used, backend will block deletion.');
+
+        if (!confirmed) return;
+
+        setState(prev => ({
+          ...prev,
+          deleting: true
+        }));
+
+        try {
+          const response = await gasRun('deleteBranch', state.token, branch.BranchID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Delete branch failed.');
+            return;
+          }
+
+          showToast(response.message || 'Branch deleted.');
+
+          const nextBranches = response.branches || state.branches.filter(row => row.BranchID !== branch.BranchID);
+
+          writeCache(STORAGE_KEYS.BRANCH_CACHE, {
+            branches: nextBranches
+          });
+
+          setState(prev => ({
+            ...prev,
+            branches: nextBranches
+          }));
+
+          await refreshAllData();
+
+        } catch (error) {
+          showToast(error.message || 'Delete branch failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            deleting: false
+          }));
+        }
+      }
+
+      async function handleDeactivateBranch(branch) {
+        const confirmed = window.confirm('Set this branch as inactive?');
+
+        if (!confirmed) return;
+
+        try {
+          const response = await gasRun('deactivateBranch', state.token, branch.BranchID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Deactivate branch failed.');
+            return;
+          }
+
+          showToast(response.message || 'Branch updated.');
+          await refreshAllData();
+
+        } catch (error) {
+          showToast(error.message || 'Deactivate branch failed.');
+        }
+      }
+
+      function openCreateCategoryForm() {
+        setCategoryForm({
+          ...EMPTY_CATEGORY_FORM,
+          categoryId: '',
+          categoryName: '',
+          status: 'Active'
+        });
+
+        setCategoryFormMode('create');
+        setCategoryFormOpen(true);
+      }
+
+      function openEditCategoryForm(category) {
+        setCategoryForm({
+          categoryId: category.CategoryID,
+          categoryName: category.CategoryName,
+          status: category.Status || 'Active'
+        });
+
+        setCategoryFormMode('edit');
+        setCategoryFormOpen(true);
+      }
+
+      function closeCategoryForm() {
+        setCategoryFormOpen(false);
+        setCategoryForm(EMPTY_CATEGORY_FORM);
+        setCategoryFormMode('create');
+      }
+
+      function updateCategoryForm(field, value) {
+        setCategoryForm(prev => ({
+          ...prev,
+          [field]: value
+        }));
+      }
+
+      async function handleSubmitCategoryForm(event) {
+        event.preventDefault();
+
+        setState(prev => ({
+          ...prev,
+          saving: true
+        }));
+
+        try {
+          const payload = {
+            categoryId: categoryForm.categoryId,
+            categoryName: categoryForm.categoryName,
+            status: categoryForm.status
+          };
+
+          const response = categoryFormMode === 'create'
+            ? await gasRun('createCategory', state.token, payload)
+            : await gasRun('updateCategory', state.token, categoryForm.categoryId, payload);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Save category failed.');
+            return;
+          }
+
+          showToast(response.message || 'Category saved.');
+
+          const nextCategories = response.categories || state.categories;
+
+          setState(prev => ({
+            ...prev,
+            categories: nextCategories
+          }));
+
+          writeCache(STORAGE_KEYS.SETTINGS_CACHE, {
+            categories: nextCategories,
+            units: state.units,
+            summary: state.settingsSummary
+          });
+
+          closeCategoryForm();
+          await refreshSettingsData();
+
+        } catch (error) {
+          showToast(error.message || 'Save category failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            saving: false
+          }));
+        }
+      }
+
+      async function handleDeleteCategory(category) {
+        const confirmed = window.confirm('Delete this category? If it is already used, backend will block deletion.');
+
+        if (!confirmed) return;
+
+        setState(prev => ({
+          ...prev,
+          deleting: true
+        }));
+
+        try {
+          const response = await gasRun('deleteCategory', state.token, category.CategoryID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Delete category failed.');
+            return;
+          }
+
+          showToast(response.message || 'Category deleted.');
+
+          setState(prev => ({
+            ...prev,
+            categories: response.categories || prev.categories.filter(row => row.CategoryID !== category.CategoryID)
+          }));
+
+          await refreshSettingsData();
+
+        } catch (error) {
+          showToast(error.message || 'Delete category failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            deleting: false
+          }));
+        }
+      }
+
+      async function handleDeactivateCategory(category) {
+        const confirmed = window.confirm('Set this category as inactive?');
+
+        if (!confirmed) return;
+
+        try {
+          const response = await gasRun('deactivateCategory', state.token, category.CategoryID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Deactivate category failed.');
+            return;
+          }
+
+          showToast(response.message || 'Category updated.');
+          await refreshSettingsData();
+
+        } catch (error) {
+          showToast(error.message || 'Deactivate category failed.');
+        }
+      }
+
+      function openCreateUnitForm() {
+        setUnitForm({
+          ...EMPTY_UNIT_FORM,
+          unitId: '',
+          unitName: '',
+          status: 'Active'
+        });
+
+        setUnitFormMode('create');
+        setUnitFormOpen(true);
+      }
+
+      function openEditUnitForm(unit) {
+        setUnitForm({
+          unitId: unit.UnitID,
+          unitName: unit.UnitName,
+          status: unit.Status || 'Active'
+        });
+
+        setUnitFormMode('edit');
+        setUnitFormOpen(true);
+      }
+
+      function closeUnitForm() {
+        setUnitFormOpen(false);
+        setUnitForm(EMPTY_UNIT_FORM);
+        setUnitFormMode('create');
+      }
+
+      function updateUnitForm(field, value) {
+        setUnitForm(prev => ({
+          ...prev,
+          [field]: value
+        }));
+      }
+
+      async function handleSubmitUnitForm(event) {
+        event.preventDefault();
+
+        setState(prev => ({
+          ...prev,
+          saving: true
+        }));
+
+        try {
+          const payload = {
+            unitId: unitForm.unitId,
+            unitName: unitForm.unitName,
+            status: unitForm.status
+          };
+
+          const response = unitFormMode === 'create'
+            ? await gasRun('createUnit', state.token, payload)
+            : await gasRun('updateUnit', state.token, unitForm.unitId, payload);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Save unit failed.');
+            return;
+          }
+
+          showToast(response.message || 'Unit saved.');
+
+          const nextUnits = response.units || state.units;
+
+          setState(prev => ({
+            ...prev,
+            units: nextUnits
+          }));
+
+          writeCache(STORAGE_KEYS.SETTINGS_CACHE, {
+            categories: state.categories,
+            units: nextUnits,
+            summary: state.settingsSummary
+          });
+
+          closeUnitForm();
+          await refreshSettingsData();
+
+        } catch (error) {
+          showToast(error.message || 'Save unit failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            saving: false
+          }));
+        }
+      }
+
+      async function handleDeleteUnit(unit) {
+        const confirmed = window.confirm('Delete this unit? If it is already used, backend will block deletion.');
+
+        if (!confirmed) return;
+
+        setState(prev => ({
+          ...prev,
+          deleting: true
+        }));
+
+        try {
+          const response = await gasRun('deleteUnit', state.token, unit.UnitID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Delete unit failed.');
+            return;
+          }
+
+          showToast(response.message || 'Unit deleted.');
+
+          setState(prev => ({
+            ...prev,
+            units: response.units || prev.units.filter(row => row.UnitID !== unit.UnitID)
+          }));
+
+          await refreshSettingsData();
+
+        } catch (error) {
+          showToast(error.message || 'Delete unit failed.');
+        } finally {
+          setState(prev => ({
+            ...prev,
+            deleting: false
+          }));
+        }
+      }
+
+      async function handleDeactivateUnit(unit) {
+        const confirmed = window.confirm('Set this unit as inactive?');
+
+        if (!confirmed) return;
+
+        try {
+          const response = await gasRun('deactivateUnit', state.token, unit.UnitID);
+
+          if (!response || !response.success) {
+            showToast(response ? response.message : 'Deactivate unit failed.');
+            return;
+          }
+
+          showToast(response.message || 'Unit updated.');
+          await refreshSettingsData();
+
+        } catch (error) {
+          showToast(error.message || 'Deactivate unit failed.');
+        }
+      }
+
+      function showToast(message) {
+        setState(prev => ({
+          ...prev,
+          toast: message
+        }));
+
+        setTimeout(() => {
+          setState(prev => ({
+            ...prev,
+            toast: ''
+          }));
+        }, 2800);
+      }
+
+      const isManagement = isManagementUser(state.user);
+      const isAdmin = isAdminUser(state.user);
+
+      const effectiveSelectedBranchId = isAdmin && state.user
+        ? state.user.branchId
+        : selectedBranchId;
+
+      const activeCategories = useMemo(() => {
+        return state.categories.filter(category => String(category.Status).toLowerCase() === 'active');
+      }, [state.categories]);
+
+      const activeUnits = useMemo(() => {
+        return state.units.filter(unit => String(unit.Status).toLowerCase() === 'active');
+      }, [state.units]);
+
+      const filteredItems = useMemo(() => {
+        return state.inventoryItems.filter(item => {
+          const itemMonth = String(item.PurchaseDate || '').substring(0, 7);
+          const sameMonth = selectedMonth ? itemMonth === selectedMonth : true;
+          const sameBranch = effectiveSelectedBranchId === 'ALL' || item.BranchID === effectiveSelectedBranchId;
+
+          return sameMonth && sameBranch;
+        });
+      }, [state.inventoryItems, selectedMonth, effectiveSelectedBranchId]);
+
+      const boardGroups = useMemo(() => {
+        return STATUS_OPTIONS.reduce((acc, status) => {
+          acc[status] = filteredItems.filter(item => String(item.Status) === status);
+          return acc;
+        }, {});
+      }, [filteredItems]);
+
+      if (state.loading) {
+        return <LoadingScreen text="Opening dashboard..." />;
+      }
+
+      if (state.error) {
+        return (
+          <ErrorScreen
+            message={state.error}
+            onLogout={handleLogout}
+          />
+        );
+      }
+
+      if (!state.user) {
+        return <LoadingScreen text="Redirecting to login..." />;
+      }
+
+      return (
+        <main className="min-h-screen bg-slate-100 text-slate-950 dark:bg-slate-950 dark:text-white pb-28 page-enter">
+          <Header
+            appConfig={appConfig}
+            theme={theme}
+            refreshing={state.refreshing}
+            fromCache={state.fromCache}
+            onThemeToggle={toggleTheme}
+            onRefresh={refreshAllData}
+            onLogout={handleLogout}
+          />
+
+          <section className="max-w-7xl mx-auto px-4 py-6">
+            <WelcomePanel
+              user={state.user}
+              isManagement={isManagement}
+              isAdmin={isAdmin}
+            />
+
+            {activeDock === 'overview' && (
+              <OverviewView
+                branches={state.branches}
+                inventoryItems={state.inventoryItems}
+                categories={state.categories}
+                units={state.units}
+                summary={state.summary}
+                onOpenChecker={() => setActiveDock('checker')}
+              />
+            )}
+
+            {activeDock === 'branches' && (
+              <BranchesView
+                branches={state.branches}
+                isManagement={isManagement}
+                onCreate={openCreateBranchForm}
+                onEdit={openEditBranchForm}
+                onDelete={handleDeleteBranch}
+                onDeactivate={handleDeactivateBranch}
+              />
+            )}
+
+            {activeDock === 'checker' && (
+              <InventoryCheckerView
+                branches={state.branches}
+                items={filteredItems}
+                boardGroups={boardGroups}
+                viewMode={viewMode}
+                selectedMonth={selectedMonth}
+                selectedBranchId={effectiveSelectedBranchId}
+                calendarSelectedDate={calendarSelectedDate}
+                isManagement={isManagement}
+                isAdmin={isAdmin}
+                refreshing={state.refreshing}
+                categoryCount={activeCategories.length}
+                unitCount={activeUnits.length}
+                onViewModeChange={setViewMode}
+                onMonthChange={setSelectedMonth}
+                onBranchChange={setSelectedBranchId}
+                onCalendarDateChange={setCalendarSelectedDate}
+                onCreate={openCreateInventoryForm}
+                onOpenDetail={openDetail}
+                onRefresh={() => refreshInventoryData({ useCacheFirst: false })}
+                onOpenSettings={() => setActiveDock('settings')}
+              />
+            )}
+
+            {activeDock === 'reports' && (
+              <ReportsView
+                items={filteredItems}
+                summary={state.summary}
+              />
+            )}
+
+            {activeDock === 'settings' && (
+              <SettingsView
+                categories={state.categories}
+                units={state.units}
+                summary={state.settingsSummary}
+                isManagement={isManagement}
+                refreshing={state.refreshing}
+                onRefresh={() => refreshSettingsData({ useCacheFirst: false })}
+                onCreateCategory={openCreateCategoryForm}
+                onEditCategory={openEditCategoryForm}
+                onDeleteCategory={handleDeleteCategory}
+                onDeactivateCategory={handleDeactivateCategory}
+                onCreateUnit={openCreateUnitForm}
+                onEditUnit={openEditUnitForm}
+                onDeleteUnit={handleDeleteUnit}
+                onDeactivateUnit={handleDeactivateUnit}
+              />
+            )}
+          </section>
+
+          <MacDock
+            activeDock={activeDock}
+            isManagement={isManagement}
+            onDockChange={setActiveDock}
+          />
+
+          {inventoryFormOpen && (
+            <InventoryFormModal
+              form={inventoryForm}
+              formMode={inventoryFormMode}
+              branches={state.branches}
+              categories={activeCategories}
+              units={activeUnits}
+              isManagement={isManagement}
+              saving={state.saving}
+              onChange={updateInventoryForm}
+              onPhotoSelected={handlePhotoSelected}
+              onPhotoRemoved={handlePhotoRemoved}
+              onClose={closeInventoryForm}
+              onSubmit={handleSubmitInventoryForm}
+              onOpenSettings={() => {
+                closeInventoryForm();
+                setActiveDock('settings');
+              }}
+            />
+          )}
+
+          {detailOpen && selectedDetailItem && (
+            <InventoryDetailModal
+              item={selectedDetailItem}
+              onClose={closeDetail}
+              onEdit={handleDetailEdit}
+              onDelete={handleDeleteInventory}
+              onQuickStatus={handleQuickInventoryStatus}
+            />
+          )}
+
+          {branchFormOpen && (
+            <BranchFormModal
+              form={branchForm}
+              formMode={branchFormMode}
+              saving={state.saving}
+              onChange={updateBranchForm}
+              onClose={closeBranchForm}
+              onSubmit={handleSubmitBranchForm}
+            />
+          )}
+
+          {categoryFormOpen && (
+            <CategoryFormModal
+              form={categoryForm}
+              formMode={categoryFormMode}
+              saving={state.saving}
+              onChange={updateCategoryForm}
+              onClose={closeCategoryForm}
+              onSubmit={handleSubmitCategoryForm}
+            />
+          )}
+
+          {unitFormOpen && (
+            <UnitFormModal
+              form={unitForm}
+              formMode={unitFormMode}
+              saving={state.saving}
+              onChange={updateUnitForm}
+              onClose={closeUnitForm}
+              onSubmit={handleSubmitUnitForm}
+            />
+          )}
+
+          {state.toast && (
+            <Toast message={state.toast} />
+          )}
+        </main>
+      );
+    }
+
+    function Header({ appConfig, theme, refreshing, fromCache, onThemeToggle, onRefresh, onLogout }) {
+      return (
+        <header className="sticky top-0 z-20 border-b border-slate-200/80 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80">
+          <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <LogoMark />
+
+              <div>
+                <h1 className="text-lg font-black tracking-tight">
+                  {appConfig.name}
+                </h1>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Monthly branch inventory checker · v{appConfig.version}
+                  {fromCache ? ' · cached' : ''}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="hidden sm:inline-flex rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 transition disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {refreshing ? 'Refreshing...' : 'Refresh'}
+              </button>
+
+              <button
+                onClick={onThemeToggle}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 transition dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {theme === 'dark' ? 'Light' : 'Dark'}
+              </button>
+
+              <button
+                onClick={onLogout}
+                className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white hover:bg-slate-800 transition dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                Logout
+              </button>
+            </div>
+          </div>
+        </header>
+      );
+    }
+
+    function WelcomePanel({ user, isManagement }) {
+      return (
+        <div className="mb-6 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
+            <div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-green-50 border border-green-200 px-4 py-2 text-sm font-bold text-green-700 mb-4 dark:bg-green-500/10 dark:border-green-500/20 dark:text-green-300">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                Login successful
+              </div>
+
+              <h2 className="text-3xl md:text-4xl font-black tracking-tight">
+                Welcome, {user.name}
+              </h2>
+
+              <p className="text-slate-500 dark:text-slate-400 mt-2">
+                {isManagement
+                  ? 'You are managing inventory data across all branches.'
+                  : `You are managing inventory purchases for ${user.branchName}.`}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <MiniInfo label="Role" value={user.role} />
+              <MiniInfo label="Access" value={isManagement ? 'All Branches' : 'Assigned Branch'} />
+              <MiniInfo label="Status" value={user.status} highlight />
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function OverviewView({ branches, inventoryItems, categories, units, summary, onOpenChecker }) {
+      const totalEstimated = inventoryItems.reduce((sum, item) => sum + Number(item.EstimatedPrice || 0), 0);
+      const totalActual = inventoryItems.reduce((sum, item) => sum + Number(item.ActualPrice || 0), 0);
+      const activeCategories = categories.filter(category => category.Status === 'Active').length;
+      const activeUnits = units.filter(unit => unit.Status === 'Active').length;
+      const photoCount = inventoryItems.filter(item => item.PhotoURL).length;
+
+      return (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <StatCard label="Branches" value={summary ? summary.totalBranches : branches.length} helper="Accessible branches" />
+            <StatCard label="Planned" value={summary ? summary.plannedChecks : countStatus(inventoryItems, 'Planned')} helper="Purchase plans" />
+            <StatCard label="Photos" value={photoCount} helper="Drive proof files" />
+            <StatCard label="Master Data" value={`${activeCategories}/${activeUnits}`} helper="Categories / Units" />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+            <div className="lg:col-span-2 rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <h3 className="text-2xl font-black">
+                Inventory Checker
+              </h3>
+
+              <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 max-w-2xl leading-relaxed">
+                Plan monthly branch purchases, record item price, track status, and upload compressed proof photos directly to Google Drive.
+                Category and Unit are controlled from Settings to keep reports clean.
+              </p>
+
+              <button
+                onClick={onOpenChecker}
+                className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 transition dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                Open Checker
+              </button>
+            </div>
+
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <p className="text-sm text-slate-500 dark:text-slate-400">Cost Summary</p>
+              <h3 className="text-2xl font-black mt-2">{formatCurrencyCompact(totalActual)}</h3>
+              <p className="text-xs text-slate-400 mt-1">Actual spending</p>
+
+              <div className="mt-5 grid grid-cols-2 gap-3">
+                <MiniInfo label="Estimated" value={formatCurrencyCompact(totalEstimated)} />
+                <MiniInfo label="Variance" value={formatCurrencyCompact(totalActual - totalEstimated)} />
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function InventoryCheckerView({
+      branches,
+      items,
+      boardGroups,
+      viewMode,
+      selectedMonth,
+      selectedBranchId,
+      calendarSelectedDate,
+      isManagement,
+      refreshing,
+      categoryCount,
+      unitCount,
+      onViewModeChange,
+      onMonthChange,
+      onBranchChange,
+      onCalendarDateChange,
+      onCreate,
+      onOpenDetail,
+      onRefresh,
+      onOpenSettings
+    }) {
+      const masterReady = categoryCount > 0 && unitCount > 0;
+
+      return (
+        <div className="space-y-5">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+              <div>
+                <h3 className="text-2xl font-black">
+                  Inventory Checker
+                </h3>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {isManagement
+                    ? 'Management dashboard with all branch filtering.'
+                    : 'Admin dashboard for your assigned branch only.'}
+                </p>
+
+                {!masterReady && (
+                  <p className="text-xs text-red-500 font-bold mt-2">
+                    Category and Unit dropdown data is empty. Please open Settings first.
+                  </p>
+                )}
+              </div>
+
+              <div className="flex flex-col md:flex-row gap-3">
+                <input
+                  type="month"
+                  value={selectedMonth}
+                  onChange={event => onMonthChange(event.target.value)}
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-950 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:ring-white"
+                />
+
+                {isManagement && (
+                  <select
+                    value={selectedBranchId}
+                    onChange={event => onBranchChange(event.target.value)}
+                    className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-slate-950 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:ring-white"
+                  >
+                    <option value="ALL">All Branches</option>
+                    {branches.map(branch => (
+                      <option key={branch.BranchID} value={branch.BranchID}>
+                        {branch.BranchName}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                <div className="flex rounded-2xl border border-slate-300 bg-slate-100 p-1 dark:border-slate-700 dark:bg-slate-950">
+                  <button
+                    onClick={() => onViewModeChange('board')}
+                    className={
+                      'rounded-xl px-4 py-2 text-sm font-bold transition ' +
+                      (
+                        viewMode === 'board'
+                          ? 'bg-white text-slate-950 shadow-sm dark:bg-slate-800 dark:text-white'
+                          : 'text-slate-500 hover:text-slate-950 dark:hover:text-white'
+                      )
+                    }
+                  >
+                    Board
+                  </button>
+
+                  <button
+                    onClick={() => onViewModeChange('calendar')}
+                    className={
+                      'rounded-xl px-4 py-2 text-sm font-bold transition ' +
+                      (
+                        viewMode === 'calendar'
+                          ? 'bg-white text-slate-950 shadow-sm dark:bg-slate-800 dark:text-white'
+                          : 'text-slate-500 hover:text-slate-950 dark:hover:text-white'
+                      )
+                    }
+                  >
+                    Calendar
+                  </button>
+                </div>
+
+                <button
+                  onClick={onRefresh}
+                  disabled={refreshing}
+                  className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:hover:bg-slate-800"
+                >
+                  {refreshing ? 'Loading...' : 'Refresh'}
+                </button>
+
+                {!masterReady && isManagement ? (
+                  <button
+                    onClick={onOpenSettings}
+                    className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-bold text-white hover:bg-red-700 transition"
+                  >
+                    Setup Settings
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => onCreate(calendarSelectedDate)}
+                    disabled={!masterReady}
+                    className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 transition disabled:opacity-50 disabled:cursor-not-allowed dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                  >
+                    + Add Item
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <InventorySummaryCards items={items} />
+
+          {viewMode === 'board' ? (
+            <BoardView
+              boardGroups={boardGroups}
+              onOpenDetail={onOpenDetail}
+            />
+          ) : (
+            <CalendarView
+              selectedMonth={selectedMonth}
+              selectedDate={calendarSelectedDate}
+              items={items}
+              onDateChange={onCalendarDateChange}
+              onCreate={onCreate}
+              onOpenDetail={onOpenDetail}
+            />
+          )}
+        </div>
+      );
+    }
+
+    function InventorySummaryCards({ items }) {
+      const summary = STATUS_OPTIONS.reduce((acc, status) => {
+        acc[status] = items.filter(item => item.Status === status).length;
+        return acc;
+      }, {});
+
+      const totalEstimated = items.reduce((sum, item) => sum + Number(item.EstimatedPrice || 0), 0);
+      const totalActual = items.reduce((sum, item) => sum + Number(item.ActualPrice || 0), 0);
+      const withPhoto = items.filter(item => item.PhotoURL).length;
+
+      return (
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <StatCard label="Total" value={items.length} helper="Items this month" />
+          <StatCard label="Planned" value={summary.Planned || 0} helper="Purchase plans" />
+          <StatCard label="Pending" value={summary.Pending || 0} helper="Need follow-up" />
+          <StatCard label="Purchased" value={summary.Purchased || 0} helper="Done" />
+          <StatCard label="Photos" value={withPhoto} helper="Proof uploaded" />
+          <StatCard label="Actual" value={formatCurrencyCompact(totalActual)} helper="Real cost" />
+        </div>
+      );
+    }
+
+    function BoardView({ boardGroups, onOpenDetail }) {
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+          {STATUS_OPTIONS.map(status => (
+            <div
+              key={status}
+              className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h4 className="font-black">
+                  {status}
+                </h4>
+
+                <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-black text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  {boardGroups[status] ? boardGroups[status].length : 0}
+                </span>
+              </div>
+
+              <div className="space-y-2 h-[520px] overflow-y-auto thin-scroll pr-1">
+                {(!boardGroups[status] || boardGroups[status].length === 0) && (
+                  <div className="rounded-3xl border border-dashed border-slate-300 p-5 text-center text-sm text-slate-400 dark:border-slate-700">
+                    No items
+                  </div>
+                )}
+
+                {(boardGroups[status] || []).map(item => (
+                  <CompactInventoryCard
+                    key={item.CheckID}
+                    item={item}
+                    onOpenDetail={onOpenDetail}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    function CompactInventoryCard({ item, onOpenDetail }) {
+      const hasPhoto = hasInventoryPhoto(item);
+      const photoOpenUrl = getPhotoOpenUrl(item);
+
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h5 className="text-sm font-black truncate">
+                {item.ItemName}
+              </h5>
+
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                {item.PurchaseDate} · {item.BranchName}
+              </p>
+            </div>
+
+            <StatusDot status={item.Status} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 mt-3">
+            <CompactPrice label="Est." value={item.EstimatedPrice} />
+            <CompactPrice label="Act." value={item.ActualPrice} />
+          </div>
+
+          <div className={hasPhoto ? 'grid grid-cols-2 gap-2 mt-3' : 'mt-3'}>
+            <button
+              onClick={() => onOpenDetail(item)}
+              className="w-full rounded-xl bg-white border border-slate-200 px-3 py-2 text-xs font-black text-slate-700 hover:bg-slate-100 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              Detail
+            </button>
+
+            {hasPhoto && (
+              <a
+                href={photoOpenUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full text-center rounded-xl bg-slate-950 px-3 py-2 text-xs font-black text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                Photo
+              </a>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function CompactPrice({ label, value }) {
+      return (
+        <div className="rounded-xl bg-white border border-slate-200 px-2 py-2 dark:bg-slate-900 dark:border-slate-800">
+          <p className="text-[10px] text-slate-400 font-black">
+            {label}
+          </p>
+
+          <p className="text-xs font-black truncate">
+            {formatCurrencyCompact(value || 0)}
+          </p>
+        </div>
+      );
+    }
+
+    function CalendarView({
+      selectedMonth,
+      selectedDate,
+      items,
+      onDateChange,
+      onCreate,
+      onOpenDetail
+    }) {
+      const days = buildCalendarDays(selectedMonth);
+
+      const itemsByDate = items.reduce((acc, item) => {
+        const dateKey = normalizeDateOnly(item.PurchaseDate);
+
+        if (!acc[dateKey]) acc[dateKey] = [];
+        acc[dateKey].push(item);
+
+        return acc;
+      }, {});
+
+      const selectedItems = itemsByDate[selectedDate] || [];
+
+      return (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <div className="xl:col-span-2 rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="grid grid-cols-7 gap-2 mb-2">
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(day => (
+                <div key={day} className="text-center text-xs font-black text-slate-400 py-2">
+                  {day}
+                </div>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-7 gap-2">
+              {days.map((day, index) => {
+                const dayItems = day.date ? itemsByDate[day.date] || [] : [];
+                const isSelected = day.date === selectedDate;
+                const isToday = day.date === getTodayDate();
+
+                return (
+                  <button
+                    key={index}
+                    disabled={!day.date}
+                    onClick={() => day.date && onDateChange(day.date)}
+                    className={
+                      'h-[128px] rounded-3xl border p-2 text-left transition overflow-hidden ' +
+                      (
+                        !day.date
+                          ? 'border-transparent bg-transparent cursor-default'
+                          : isSelected
+                            ? 'border-slate-950 bg-slate-950 text-white dark:border-white dark:bg-white dark:text-slate-950'
+                            : 'border-slate-200 bg-slate-50 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-950 dark:hover:bg-slate-800'
+                      )
+                    }
+                  >
+                    {day.date && (
+                      <div className="h-full flex flex-col min-w-0">
+                        <div className="flex items-center justify-between mb-1 shrink-0">
+                          <span className="text-sm font-black">
+                            {day.dayNumber}
+                          </span>
+
+                          {isToday && (
+                            <span className={
+                              'rounded-full px-2 py-0.5 text-[9px] font-black ' +
+                              (
+                                isSelected
+                                  ? 'bg-white/20 text-white dark:bg-slate-950/10 dark:text-slate-950'
+                                  : 'bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300'
+                              )
+                            }>
+                              Today
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="space-y-1 overflow-y-auto thin-scroll pr-1">
+                          {dayItems.map(item => (
+                            <div
+                              key={item.CheckID}
+                              className={
+                                'truncate rounded-xl px-2 py-1 text-[10px] font-bold ' +
+                                (
+                                  isSelected
+                                    ? 'bg-white/15'
+                                    : 'bg-white text-slate-600 dark:bg-slate-900 dark:text-slate-300'
+                                )
+                              }
+                            >
+                              {hasInventoryPhoto(item) ? '📎 ' : ''}{item.ItemName} · {formatCurrencyCompact(item.ActualPrice || item.EstimatedPrice)}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h4 className="font-black">
+                  {formatDisplayDate(selectedDate)}
+                </h4>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {selectedItems.length} purchase item(s)
+                </p>
+              </div>
+
+              <button
+                onClick={() => onCreate(selectedDate)}
+                className="rounded-2xl bg-slate-950 px-4 py-2 text-sm font-bold text-white dark:bg-white dark:text-slate-950"
+              >
+                + Add
+              </button>
+            </div>
+
+            <div className="space-y-2 max-h-[560px] overflow-y-auto thin-scroll pr-1">
+              {selectedItems.length === 0 && (
+                <div className="rounded-3xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-400 dark:border-slate-700">
+                  No purchase plan on this date.
+                </div>
+              )}
+
+              {selectedItems.map(item => (
+                <CompactInventoryCard
+                  key={item.CheckID}
+                  item={item}
+                  onOpenDetail={onOpenDetail}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function InventoryDetailModal({
+      item,
+      onClose,
+      onEdit,
+      onDelete,
+      onQuickStatus
+    }) {
+      return (
+        <ModalShell
+          title="Inventory Detail"
+          subtitle={`${item.ItemName} · ${item.BranchName}`}
+          onClose={onClose}
+        >
+          <div className="p-6 space-y-5">
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+              <div>
+                <h3 className="text-2xl font-black">
+                  {item.ItemName}
+                </h3>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  {item.PurchaseDate} · {item.BranchName}
+                </p>
+              </div>
+
+              <StatusBadge status={item.Status} />
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <InfoPill label="Quantity" value={`${item.Quantity || 0} ${item.Unit || ''}`} />
+              <InfoPill label="Category" value={item.Category || '-'} />
+              <InfoPill label="Estimated" value={formatCurrency(item.EstimatedPrice)} />
+              <InfoPill label="Actual" value={formatCurrency(item.ActualPrice)} />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <InfoBlock label="Vendor" value={item.Vendor || '-'} />
+              <InfoBlock label="Created By" value={item.CreatedBy || '-'} />
+            </div>
+
+            <InfoBlock label="Notes" value={item.Notes || '-'} />
+
+            {hasInventoryPhoto(item) && (
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+                <p className="text-xs font-black text-slate-400 mb-3">
+                  Photo Proof
+                </p>
+
+                {item.PhotoViewURL && (
+                  <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900">
+                    <img
+                      src={item.PhotoViewURL}
+                      alt="Inventory proof"
+                      className="max-h-[260px] w-full rounded-xl object-contain"
+                    />
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={getPhotoOpenUrl(item)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex rounded-2xl bg-slate-950 px-4 py-3 text-sm font-black text-white hover:bg-slate-800 dark:bg-white dark:text-slate-950"
+                  >
+                    Open Drive Photo
+                  </a>
+
+                  {item.PhotoFileName && (
+                    <span className="inline-flex rounded-2xl border border-slate-200 bg-white px-4 py-3 text-xs font-bold text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+                      {item.PhotoFileName}
+                      {item.PhotoSizeBytes ? ` · ${formatBytes(item.PhotoSizeBytes)}` : ''}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="flex flex-wrap justify-end gap-2 pt-4 border-t border-slate-200 dark:border-slate-800">
+              {item.Status !== 'Purchased' && (
+                <button
+                  onClick={() => onQuickStatus(item, 'Purchased')}
+                  className="rounded-2xl bg-green-600 px-4 py-2 text-sm font-black text-white hover:bg-green-700"
+                >
+                  Mark Purchased
+                </button>
+              )}
+
+              {item.Status !== 'Pending' && (
+                <button
+                  onClick={() => onQuickStatus(item, 'Pending')}
+                  className="rounded-2xl bg-amber-500 px-4 py-2 text-sm font-black text-white hover:bg-amber-600"
+                >
+                  Set Pending
+                </button>
+              )}
+
+              {item.Status !== 'Cancelled' && (
+                <button
+                  onClick={() => onQuickStatus(item, 'Cancelled')}
+                  className="rounded-2xl bg-red-500 px-4 py-2 text-sm font-black text-white hover:bg-red-600"
+                >
+                  Cancel
+                </button>
+              )}
+
+              <button
+                onClick={() => onEdit(item)}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Edit
+              </button>
+
+              <button
+                onClick={() => onDelete(item)}
+                className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-sm font-black text-red-700 hover:bg-red-100 dark:bg-red-500/10 dark:border-red-500/20 dark:text-red-300"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </ModalShell>
+      );
+    }
+
+    function InventoryFormModal({
+      form,
+      formMode,
+      branches,
+      categories,
+      units,
+      isManagement,
+      saving,
+      onChange,
+      onPhotoSelected,
+      onPhotoRemoved,
+      onClose,
+      onSubmit,
+      onOpenSettings
+    }) {
+      function handleBranchChange(branchId) {
+        const selectedBranch = branches.find(branch => branch.BranchID === branchId);
+
+        onChange('branchId', branchId);
+        onChange('branchName', selectedBranch ? selectedBranch.BranchName : '');
+      }
+
+      const hasCategories = categories.length > 0;
+      const hasUnits = units.length > 0;
+
+      return (
+        <ModalShell
+          title={formMode === 'create' ? 'Add Purchase Plan' : 'Edit Purchase Plan'}
+          subtitle="Monthly inventory checker data."
+          onClose={onClose}
+        >
+          <form onSubmit={onSubmit} className="p-6 space-y-5">
+            {(!hasCategories || !hasUnits) && (
+              <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+                Category or Unit data is empty. Please add active Category and Unit from Settings first.
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {isManagement && (
+                <Field label="Branch">
+                  <select
+                    value={form.branchId}
+                    required
+                    onChange={event => handleBranchChange(event.target.value)}
+                    className={inputClassName()}
+                  >
+                    <option value="">Select branch</option>
+                    {branches
+                      .filter(branch => branch.Status === 'Active')
+                      .map(branch => (
+                        <option key={branch.BranchID} value={branch.BranchID}>
+                          {branch.BranchName}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+              )}
+
+              <Input
+                label="Item Name"
+                value={form.itemName}
+                required
+                placeholder="Example: Tissue, gallon water, cleaning liquid"
+                onChange={value => onChange('itemName', value)}
+              />
+
+              <Field label="Category">
+                <select
+                  value={form.category}
+                  required
+                  disabled={!hasCategories}
+                  onChange={event => onChange('category', event.target.value)}
+                  className={inputClassName() + (!hasCategories ? ' opacity-60 cursor-not-allowed' : '')}
+                >
+                  <option value="">Select category</option>
+                  {categories.map(category => (
+                    <option key={category.CategoryID} value={category.CategoryName}>
+                      {category.CategoryName}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Input
+                label="Purchase Date"
+                type="date"
+                value={form.purchaseDate}
+                required
+                onChange={value => onChange('purchaseDate', value)}
+              />
+
+              <Input
+                label="Quantity"
+                type="number"
+                value={form.quantity}
+                placeholder="0"
+                onChange={value => onChange('quantity', value)}
+              />
+
+              <Field label="Unit">
+                <select
+                  value={form.unit}
+                  required
+                  disabled={!hasUnits}
+                  onChange={event => onChange('unit', event.target.value)}
+                  className={inputClassName() + (!hasUnits ? ' opacity-60 cursor-not-allowed' : '')}
+                >
+                  <option value="">Select unit</option>
+                  {units.map(unit => (
+                    <option key={unit.UnitID} value={unit.UnitName}>
+                      {unit.UnitName}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Input
+                label="Estimated Price"
+                type="number"
+                value={form.estimatedPrice}
+                placeholder="0"
+                onChange={value => onChange('estimatedPrice', value)}
+              />
+
+              <Input
+                label="Actual Price"
+                type="number"
+                value={form.actualPrice}
+                placeholder="0"
+                onChange={value => onChange('actualPrice', value)}
+              />
+
+              <Input
+                label="Vendor"
+                value={form.vendor}
+                placeholder="Store / supplier name"
+                onChange={value => onChange('vendor', value)}
+              />
+
+              <Field label="Status">
+                <select
+                  value={form.status}
+                  onChange={event => onChange('status', event.target.value)}
+                  className={inputClassName()}
+                >
+                  {STATUS_OPTIONS.map(status => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <div className="md:col-span-2">
+                <PhotoUploadField
+                  currentPhotoUrl={form.photoUrl}
+                  currentPhotoViewUrl={form.photoViewUrl}
+                  previewUrl={form.photoPreviewUrl}
+                  fileName={form.photoFileName}
+                  sizeLabel={form.photoSizeLabel}
+                  onPhotoSelected={onPhotoSelected}
+                  onPhotoRemoved={onPhotoRemoved}
+                />
+              </div>
+
+              <div className="md:col-span-2">
+                <Field label="Notes">
+                  <textarea
+                    value={form.notes}
+                    rows="4"
+                    placeholder="Additional notes"
+                    onChange={event => onChange('notes', event.target.value)}
+                    className={inputClassName()}
+                  ></textarea>
+                </Field>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2">
+              {(!hasCategories || !hasUnits) && (
+                <button
+                  type="button"
+                  onClick={onOpenSettings}
+                  className="rounded-2xl bg-red-600 px-5 py-3 text-sm font-black text-white hover:bg-red-700"
+                >
+                  Open Settings
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving || !hasCategories || !hasUnits}
+                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                {saving
+                  ? (form.photoUpload ? 'Uploading Photo & Saving...' : 'Saving...')
+                  : (formMode === 'create' ? 'Create Item' : 'Save Changes')}
+              </button>
+            </div>
+          </form>
+        </ModalShell>
+      );
+    }
+
+    function PhotoUploadField({
+      currentPhotoUrl,
+      currentPhotoViewUrl,
+      previewUrl,
+      fileName,
+      sizeLabel,
+      onPhotoSelected,
+      onPhotoRemoved
+    }) {
+      const inputRef = useRef(null);
+      const [dragging, setDragging] = useState(false);
+      const [processing, setProcessing] = useState(false);
+      const [error, setError] = useState('');
+
+      async function handleFiles(files) {
+        const file = files && files[0] ? files[0] : null;
+
+        if (!file) return;
+
+        setError('');
+
+        if (PHOTO_ACCEPT_TYPES.indexOf(file.type) === -1) {
+          setError('Only JPG, PNG, or WEBP images are allowed.');
+          return;
+        }
+
+        setProcessing(true);
+
+        try {
+          const compressed = await compressImageFile(file);
+
+          if (compressed.sizeBytes > PHOTO_MAX_COMPRESSED_BYTES) {
+            setError(
+              'Compressed photo is still too large (' +
+              formatBytes(compressed.sizeBytes) +
+              '). Please choose a smaller image.'
+            );
+            return;
+          }
+
+          onPhotoSelected(compressed);
+        } catch (error) {
+          setError(error.message || 'Failed to process image.');
+        } finally {
+          setProcessing(false);
+        }
+      }
+
+      function openFilePicker() {
+        if (inputRef.current) {
+          inputRef.current.click();
+        }
+      }
+
+      function handleDrop(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDragging(false);
+
+        if (event.dataTransfer.files && event.dataTransfer.files.length > 0) {
+          handleFiles(event.dataTransfer.files);
+        }
+      }
+
+      function handleDragEnter(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDragging(true);
+      }
+
+      function handleDragOver(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        setDragging(true);
+      }
+
+      function handleDragLeave(event) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setDragging(false);
+        }
+      }
+
+      const hasPhoto = Boolean(currentPhotoUrl || previewUrl);
+
+      return (
+        <Field label="Photo Proof">
+          <div
+            onDrop={handleDrop}
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            className={
+              'rounded-3xl border-2 border-dashed p-5 transition ' +
+              (
+                dragging
+                  ? 'border-slate-950 bg-slate-100 dark:border-white dark:bg-slate-800'
+                  : 'border-slate-300 bg-slate-50 dark:border-slate-700 dark:bg-slate-950'
+              )
+            }
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="hidden"
+              onChange={event => {
+                handleFiles(event.target.files);
+                event.target.value = null;
+              }}
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center pointer-events-none">
+              <div className="md:col-span-2">
+                <p className="text-sm font-black text-slate-800 dark:text-slate-100">
+                  Drag & drop photo here
+                </p>
+
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Or choose an image file. It will be compressed first, then uploaded to Google Drive before the item is saved.
+                </p>
+
+                {fileName && (
+                  <p className="text-xs font-bold text-green-600 dark:text-green-300 mt-2 pointer-events-auto">
+                    {previewUrl ? 'Selected' : 'Attached'}: {fileName} {sizeLabel ? `· ${sizeLabel}` : ''}
+                  </p>
+                )}
+
+                {currentPhotoUrl && !previewUrl && (
+                  <p className="text-xs font-bold text-blue-600 dark:text-blue-300 mt-2 pointer-events-auto">
+                    Existing Drive photo is attached.
+                  </p>
+                )}
+
+                {error && (
+                  <p className="text-xs font-bold text-red-600 dark:text-red-300 mt-2 pointer-events-auto">
+                    {error}
+                  </p>
+                )}
+
+                <div className="flex flex-wrap gap-2 mt-4 pointer-events-auto">
+                  <button
+                    type="button"
+                    onClick={openFilePicker}
+                    disabled={processing}
+                    className="rounded-2xl bg-slate-950 px-4 py-2 text-xs font-black text-white hover:bg-slate-800 disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                  >
+                    {processing ? 'Compressing...' : 'Choose File'}
+                  </button>
+
+                  {hasPhoto && (
+                    <button
+                      type="button"
+                      onClick={onPhotoRemoved}
+                      className="rounded-2xl border border-red-200 bg-red-50 px-4 py-2 text-xs font-black text-red-700 hover:bg-red-100 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300"
+                    >
+                      Remove Photo
+                    </button>
+                  )}
+
+                  {currentPhotoUrl && (
+                    <a
+                      href={currentPhotoUrl || currentPhotoViewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-2xl border border-slate-300 bg-white px-4 py-2 text-xs font-black text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                    >
+                      Open Existing
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-slate-200 bg-white p-2 min-h-[120px] flex items-center justify-center dark:border-slate-800 dark:bg-slate-900 pointer-events-auto">
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Compressed preview"
+                    className="max-h-[150px] rounded-xl object-contain"
+                  />
+                ) : currentPhotoViewUrl ? (
+                  <img
+                    src={currentPhotoViewUrl}
+                    alt="Current Drive proof"
+                    className="max-h-[150px] rounded-xl object-contain"
+                  />
+                ) : currentPhotoUrl ? (
+                  <div className="text-center">
+                    <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                      📎
+                    </div>
+                    <p className="text-xs font-bold text-slate-500 dark:text-slate-400">
+                      Drive photo linked
+                    </p>
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-300">
+                      +
+                    </div>
+                    <p className="text-xs font-bold text-slate-400">
+                      No photo
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </Field>
+      );
+    }
+
+    function BranchesView({ branches, isManagement, onCreate, onEdit, onDelete, onDeactivate }) {
+      const activeCount = branches.filter(branch => branch.Status === 'Active').length;
+      const inactiveCount = branches.filter(branch => branch.Status === 'Inactive').length;
+
+      return (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <StatCard label="Total Branches" value={branches.length} helper="Accessible branch database" />
+            <StatCard label="Active" value={activeCount} helper="Can be used" />
+            <StatCard label="Inactive" value={inactiveCount} helper="Disabled branches" />
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
+              <div>
+                <h3 className="text-xl font-black">
+                  Branch List
+                </h3>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {isManagement
+                    ? 'Management can create, edit, deactivate, and delete branch master data.'
+                    : 'Admin can only view assigned branch information.'}
+                </p>
+              </div>
+
+              {isManagement && (
+                <button
+                  onClick={onCreate}
+                  className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 transition dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+                >
+                  + Add Branch
+                </button>
+              )}
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                    <th className="py-3 pr-4 font-bold">Branch ID</th>
+                    <th className="py-3 pr-4 font-bold">Branch Name</th>
+                    <th className="py-3 pr-4 font-bold">Address</th>
+                    <th className="py-3 pr-4 font-bold">Status</th>
+                    {isManagement && <th className="py-3 pr-4 font-bold text-right">Action</th>}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {branches.length === 0 && (
+                    <tr>
+                      <td colSpan={isManagement ? '5' : '4'} className="py-6 text-center text-slate-500">
+                        No branch data found.
+                      </td>
+                    </tr>
+                  )}
+
+                  {branches.map(branch => (
+                    <tr key={branch.BranchID} className="border-b border-slate-100 dark:border-slate-800">
+                      <td className="py-4 pr-4 font-bold">{branch.BranchID}</td>
+                      <td className="py-4 pr-4">{branch.BranchName}</td>
+                      <td className="py-4 pr-4 text-slate-500 dark:text-slate-400">{branch.Address}</td>
+                      <td className="py-4 pr-4">
+                        <BranchStatusBadge status={branch.Status} />
+                      </td>
+
+                      {isManagement && (
+                        <td className="py-4 pr-4">
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => onEdit(branch)}
+                              className="rounded-full bg-white border border-slate-200 px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-100 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200"
+                            >
+                              Edit
+                            </button>
+
+                            {branch.Status === 'Active' && branch.BranchID !== 'BR-DEFAULT' && (
+                              <button
+                                onClick={() => onDeactivate(branch)}
+                                className="rounded-full bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs font-black text-amber-700 hover:bg-amber-100 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-300"
+                              >
+                                Inactive
+                              </button>
+                            )}
+
+                            {branch.BranchID !== 'BR-DEFAULT' && (
+                              <button
+                                onClick={() => onDelete(branch)}
+                                className="rounded-full bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-black text-red-700 hover:bg-red-100 dark:bg-red-500/10 dark:border-red-500/20 dark:text-red-300"
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SettingsView({
+      categories,
+      units,
+      summary,
+      isManagement,
+      refreshing,
+      onRefresh,
+      onCreateCategory,
+      onEditCategory,
+      onDeleteCategory,
+      onDeactivateCategory,
+      onCreateUnit,
+      onEditUnit,
+      onDeleteUnit,
+      onDeactivateUnit
+    }) {
+      const activeCategories = categories.filter(category => category.Status === 'Active').length;
+      const activeUnits = units.filter(unit => unit.Status === 'Active').length;
+
+      return (
+        <div className="space-y-5">
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div>
+                <h3 className="text-2xl font-black">
+                  Settings
+                </h3>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  Manage dropdown master data for inventory item Category and Unit.
+                </p>
+              </div>
+
+              <button
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 transition disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:hover:bg-slate-800"
+              >
+                {refreshing ? 'Loading...' : 'Refresh Settings'}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="Categories" value={summary ? summary.totalCategories : categories.length} helper="Total category list" />
+            <StatCard label="Active Categories" value={summary ? summary.activeCategories : activeCategories} helper="Shown in item form" />
+            <StatCard label="Units" value={summary ? summary.totalUnits : units.length} helper="Total unit list" />
+            <StatCard label="Active Units" value={summary ? summary.activeUnits : activeUnits} helper="Shown in item form" />
+          </div>
+
+          {!isManagement && (
+            <div className="rounded-3xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
+              Admin accounts can view active dropdown data, but only Management can create, edit, deactivate, or delete Category and Unit.
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
+            <MasterDataTable
+              title="Category List"
+              description="Used by the Category dropdown in Add/Edit Item."
+              emptyText="No category data found."
+              addLabel="+ Add Category"
+              isManagement={isManagement}
+              rows={categories}
+              columns={[
+                { key: 'CategoryID', label: 'Category ID' },
+                { key: 'CategoryName', label: 'Category Name' },
+                { key: 'Status', label: 'Status' }
+              ]}
+              idKey="CategoryID"
+              onCreate={onCreateCategory}
+              onEdit={onEditCategory}
+              onDelete={onDeleteCategory}
+              onDeactivate={onDeactivateCategory}
+            />
+
+            <MasterDataTable
+              title="Unit List"
+              description="Used by the Unit dropdown in Add/Edit Item."
+              emptyText="No unit data found."
+              addLabel="+ Add Unit"
+              isManagement={isManagement}
+              rows={units}
+              columns={[
+                { key: 'UnitID', label: 'Unit ID' },
+                { key: 'UnitName', label: 'Unit Name' },
+                { key: 'Status', label: 'Status' }
+              ]}
+              idKey="UnitID"
+              onCreate={onCreateUnit}
+              onEdit={onEditUnit}
+              onDelete={onDeleteUnit}
+              onDeactivate={onDeactivateUnit}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    function MasterDataTable({
+      title,
+      description,
+      emptyText,
+      addLabel,
+      isManagement,
+      rows,
+      columns,
+      idKey,
+      onCreate,
+      onEdit,
+      onDelete,
+      onDeactivate
+    }) {
+      return (
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-5">
+            <div>
+              <h3 className="text-xl font-black">
+                {title}
+              </h3>
+
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                {description}
+              </p>
+            </div>
+
+            {isManagement && (
+              <button
+                onClick={onCreate}
+                className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white hover:bg-slate-800 transition dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+              >
+                {addLabel}
+              </button>
+            )}
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 text-left text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                  {columns.map(column => (
+                    <th key={column.key} className="py-3 pr-4 font-bold">
+                      {column.label}
+                    </th>
+                  ))}
+                  {isManagement && <th className="py-3 pr-4 font-bold text-right">Action</th>}
+                </tr>
+              </thead>
+
+              <tbody>
+                {rows.length === 0 && (
+                  <tr>
+                    <td colSpan={isManagement ? columns.length + 1 : columns.length} className="py-6 text-center text-slate-500">
+                      {emptyText}
+                    </td>
+                  </tr>
+                )}
+
+                {rows.map(row => (
+                  <tr key={row[idKey]} className="border-b border-slate-100 dark:border-slate-800">
+                    {columns.map(column => (
+                      <td key={column.key} className="py-4 pr-4">
+                        {column.key === 'Status' ? (
+                          <BranchStatusBadge status={row[column.key]} />
+                        ) : column.key === idKey ? (
+                          <span className="font-bold">{row[column.key]}</span>
+                        ) : (
+                          row[column.key]
+                        )}
+                      </td>
+                    ))}
+
+                    {isManagement && (
+                      <td className="py-4 pr-4">
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => onEdit(row)}
+                            className="rounded-full bg-white border border-slate-200 px-3 py-1.5 text-xs font-black text-slate-700 hover:bg-slate-100 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200"
+                          >
+                            Edit
+                          </button>
+
+                          {row.Status === 'Active' && (
+                            <button
+                              onClick={() => onDeactivate(row)}
+                              className="rounded-full bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs font-black text-amber-700 hover:bg-amber-100 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-300"
+                            >
+                              Inactive
+                            </button>
+                          )}
+
+                          <button
+                            onClick={() => onDelete(row)}
+                            className="rounded-full bg-red-50 border border-red-200 px-3 py-1.5 text-xs font-black text-red-700 hover:bg-red-100 dark:bg-red-500/10 dark:border-red-500/20 dark:text-red-300"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    function BranchFormModal({
+      form,
+      formMode,
+      saving,
+      onChange,
+      onClose,
+      onSubmit
+    }) {
+      return (
+        <ModalShell
+          title={formMode === 'create' ? 'Add Branch' : 'Edit Branch'}
+          subtitle="Branch master data."
+          onClose={onClose}
+        >
+          <form onSubmit={onSubmit} className="p-6 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Branch ID"
+                value={form.branchId}
+                required={formMode === 'create'}
+                disabled={formMode === 'edit'}
+                placeholder="Example: BR-PONTIANAK"
+                onChange={value => onChange('branchId', value)}
+              />
+
+              <Input
+                label="Branch Name"
+                value={form.branchName}
+                required
+                placeholder="Example: Pontianak Branch"
+                onChange={value => onChange('branchName', value)}
+              />
+
+              <div className="md:col-span-2">
+                <Input
+                  label="Address"
+                  value={form.address}
+                  placeholder="Branch address"
+                  onChange={value => onChange('address', value)}
+                />
+              </div>
+
+              <Field label="Status">
+                <select
+                  value={form.status}
+                  onChange={event => onChange('status', event.target.value)}
+                  className={inputClassName()}
+                >
+                  {BRANCH_STATUS_OPTIONS.map(status => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <ModalActions
+              saving={saving}
+              submitLabel={formMode === 'create' ? 'Create Branch' : 'Save Branch'}
+              onClose={onClose}
+            />
+          </form>
+        </ModalShell>
+      );
+    }
+
+    function CategoryFormModal({
+      form,
+      formMode,
+      saving,
+      onChange,
+      onClose,
+      onSubmit
+    }) {
+      return (
+        <ModalShell
+          title={formMode === 'create' ? 'Add Category' : 'Edit Category'}
+          subtitle="Category master data for item dropdown."
+          onClose={onClose}
+        >
+          <form onSubmit={onSubmit} className="p-6 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Category ID"
+                value={form.categoryId}
+                required={false}
+                disabled={formMode === 'edit'}
+                placeholder="Auto generated if empty"
+                onChange={value => onChange('categoryId', value)}
+              />
+
+              <Input
+                label="Category Name"
+                value={form.categoryName}
+                required
+                placeholder="Example: Cleaning"
+                onChange={value => onChange('categoryName', value)}
+              />
+
+              <Field label="Status">
+                <select
+                  value={form.status}
+                  onChange={event => onChange('status', event.target.value)}
+                  className={inputClassName()}
+                >
+                  {GENERAL_STATUS_OPTIONS.map(status => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <ModalActions
+              saving={saving}
+              submitLabel={formMode === 'create' ? 'Create Category' : 'Save Category'}
+              onClose={onClose}
+            />
+          </form>
+        </ModalShell>
+      );
+    }
+
+    function UnitFormModal({
+      form,
+      formMode,
+      saving,
+      onChange,
+      onClose,
+      onSubmit
+    }) {
+      return (
+        <ModalShell
+          title={formMode === 'create' ? 'Add Unit' : 'Edit Unit'}
+          subtitle="Unit master data for item dropdown."
+          onClose={onClose}
+        >
+          <form onSubmit={onSubmit} className="p-6 space-y-5">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Input
+                label="Unit ID"
+                value={form.unitId}
+                required={false}
+                disabled={formMode === 'edit'}
+                placeholder="Auto generated if empty"
+                onChange={value => onChange('unitId', value)}
+              />
+
+              <Input
+                label="Unit Name"
+                value={form.unitName}
+                required
+                placeholder="Example: pcs, box, bottle"
+                onChange={value => onChange('unitName', value)}
+              />
+
+              <Field label="Status">
+                <select
+                  value={form.status}
+                  onChange={event => onChange('status', event.target.value)}
+                  className={inputClassName()}
+                >
+                  {GENERAL_STATUS_OPTIONS.map(status => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <ModalActions
+              saving={saving}
+              submitLabel={formMode === 'create' ? 'Create Unit' : 'Save Unit'}
+              onClose={onClose}
+            />
+          </form>
+        </ModalShell>
+      );
+    }
+
+    function ReportsView({ items }) {
+      const totalEstimated = items.reduce((sum, item) => sum + Number(item.EstimatedPrice || 0), 0);
+      const totalActual = items.reduce((sum, item) => sum + Number(item.ActualPrice || 0), 0);
+      const variance = totalActual - totalEstimated;
+
+      const categoryMap = items.reduce((acc, item) => {
+        const category = item.Category || 'Uncategorized';
+
+        if (!acc[category]) {
+          acc[category] = {
+            category,
+            count: 0,
+            estimated: 0,
+            actual: 0,
+            photos: 0
+          };
+        }
+
+        acc[category].count += 1;
+        acc[category].estimated += Number(item.EstimatedPrice || 0);
+        acc[category].actual += Number(item.ActualPrice || 0);
+        acc[category].photos += item.PhotoURL ? 1 : 0;
+
+        return acc;
+      }, {});
+
+      const categories = Object.values(categoryMap);
+
+      return (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <StatCard label="Estimated Cost" value={formatCurrencyCompact(totalEstimated)} helper="Planned monthly budget" />
+            <StatCard label="Actual Cost" value={formatCurrencyCompact(totalActual)} helper="Real spending" />
+            <StatCard label="Variance" value={formatCurrencyCompact(variance)} helper="Actual - estimated" />
+          </div>
+
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <h3 className="text-xl font-black mb-4">
+              Category Summary
+            </h3>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-slate-200 text-left text-slate-500 dark:border-slate-800 dark:text-slate-400">
+                    <th className="py-3 pr-4 font-bold">Category</th>
+                    <th className="py-3 pr-4 font-bold">Items</th>
+                    <th className="py-3 pr-4 font-bold">Photos</th>
+                    <th className="py-3 pr-4 font-bold">Estimated</th>
+                    <th className="py-3 pr-4 font-bold">Actual</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {categories.length === 0 && (
+                    <tr>
+                      <td colSpan="5" className="py-6 text-center text-slate-500">
+                        No data for current filter.
+                      </td>
+                    </tr>
+                  )}
+
+                  {categories.map(row => (
+                    <tr key={row.category} className="border-b border-slate-100 dark:border-slate-800">
+                      <td className="py-4 pr-4 font-bold">{row.category}</td>
+                      <td className="py-4 pr-4">{row.count}</td>
+                      <td className="py-4 pr-4">{row.photos}</td>
+                      <td className="py-4 pr-4">{formatCurrency(row.estimated)}</td>
+                      <td className="py-4 pr-4">{formatCurrency(row.actual)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function MacDock({ activeDock, isManagement, onDockChange }) {
+      const items = [
+        { id: 'overview', label: 'Overview', icon: '⌂' },
+        { id: 'checker', label: 'Checker', icon: '▦' },
+        { id: 'branches', label: 'Branches', icon: '⌘' },
+        { id: 'reports', label: 'Reports', icon: '◷' },
+        { id: 'settings', label: 'Settings', icon: '⚙' }
+      ];
+
+      return (
+        <nav className="fixed left-1/2 bottom-5 z-30 -translate-x-1/2 dock-enter">
+          <div className="flex items-end gap-2 rounded-[2rem] border border-white/40 bg-white/80 px-3 py-3 shadow-2xl backdrop-blur-xl dark:border-slate-700/80 dark:bg-slate-900/80">
+            {items.map(item => {
+              const active = activeDock === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => onDockChange(item.id)}
+                  title={item.label}
+                  className={
+                    'group relative flex flex-col items-center justify-center rounded-2xl transition-all duration-200 ' +
+                    (
+                      active
+                        ? 'w-16 h-16 -translate-y-2 bg-slate-950 text-white shadow-lg dark:bg-white dark:text-slate-950'
+                        : 'w-12 h-12 bg-slate-100 text-slate-600 hover:w-16 hover:h-16 hover:-translate-y-2 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
+                    )
+                  }
+                >
+                  <span className="text-xl font-black">
+                    {item.icon}
+                  </span>
+
+                  <span className="absolute -top-9 hidden rounded-full bg-slate-950 px-3 py-1 text-xs font-bold text-white shadow-lg group-hover:block dark:bg-white dark:text-slate-950">
+                    {item.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
+      );
+    }
+
+    function ModalShell({ title, subtitle, onClose, children }) {
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto thin-scroll rounded-[2rem] border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white/90 px-6 py-4 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/90">
+              <div>
+                <h3 className="text-xl font-black">
+                  {title}
+                </h3>
+
+                <p className="text-sm text-slate-500 dark:text-slate-400">
+                  {subtitle}
+                </p>
+              </div>
+
+              <button
+                onClick={onClose}
+                className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-black text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Close
+              </button>
+            </div>
+
+            {children}
+          </div>
+        </div>
+      );
+    }
+
+    function ModalActions({ saving, submitLabel, onClose }) {
+      return (
+        <div className="flex flex-col sm:flex-row justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-2xl border border-slate-300 px-5 py-3 text-sm font-black text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="rounded-2xl bg-slate-950 px-5 py-3 text-sm font-black text-white hover:bg-slate-800 disabled:opacity-60 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+          >
+            {saving ? 'Saving...' : submitLabel}
+          </button>
+        </div>
+      );
+    }
+
+    function StatCard({ label, value, helper }) {
+      return (
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            {label}
+          </p>
+
+          <h3 className="text-2xl font-black mt-2 truncate">
+            {value}
+          </h3>
+
+          <p className="text-xs text-slate-400 mt-1">
+            {helper}
+          </p>
+        </div>
+      );
+    }
+
+    function MiniInfo({ label, value, highlight }) {
+      return (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 min-w-[140px] dark:border-slate-800 dark:bg-slate-950">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">
+            {label}
+          </p>
+
+          <p className={'text-sm font-black truncate ' + (highlight ? 'text-green-600 dark:text-green-300' : '')}>
+            {value}
+          </p>
+        </div>
+      );
+    }
+
+    function StatusBadge({ status }) {
+      const classMap = {
+        Planned: 'bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-500/10 dark:border-blue-500/20 dark:text-blue-300',
+        Pending: 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-300',
+        Purchased: 'bg-green-50 border-green-200 text-green-700 dark:bg-green-500/10 dark:border-green-500/20 dark:text-green-300',
+        Cancelled: 'bg-red-50 border-red-200 text-red-700 dark:bg-red-500/10 dark:border-red-500/20 dark:text-red-300'
+      };
+
+      return (
+        <span className={'shrink-0 rounded-full border px-3 py-1 text-[11px] font-black ' + (classMap[status] || classMap.Planned)}>
+          {status}
+        </span>
+      );
+    }
+
+    function StatusDot({ status }) {
+      const classMap = {
+        Planned: 'bg-blue-500',
+        Pending: 'bg-amber-500',
+        Purchased: 'bg-green-500',
+        Cancelled: 'bg-red-500'
+      };
+
+      return (
+        <span
+          title={status}
+          className={'mt-1 h-3 w-3 shrink-0 rounded-full ' + (classMap[status] || classMap.Planned)}
+        ></span>
+      );
+    }
+
+    function BranchStatusBadge({ status }) {
+      const isActive = status === 'Active';
+
+      return (
+        <span
+          className={
+            'rounded-full border px-3 py-1 text-xs font-bold ' +
+            (
+              isActive
+                ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-500/10 dark:border-green-500/20 dark:text-green-300'
+                : 'bg-slate-100 border-slate-200 text-slate-500 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300'
+            )
+          }
+        >
+          {status}
+        </span>
+      );
+    }
+
+    function InfoPill({ label, value }) {
+      return (
+        <div className="rounded-2xl bg-white border border-slate-200 p-3 dark:bg-slate-900 dark:border-slate-800">
+          <p className="text-[10px] uppercase tracking-wide text-slate-400 font-black">
+            {label}
+          </p>
+
+          <p className="font-black truncate mt-0.5">
+            {value || '-'}
+          </p>
+        </div>
+      );
+    }
+
+    function InfoBlock({ label, value }) {
+      return (
+        <div className="rounded-2xl bg-slate-50 border border-slate-200 p-4 dark:bg-slate-950 dark:border-slate-800">
+          <p className="text-xs text-slate-400 font-black mb-1">
+            {label}
+          </p>
+
+          <p className="text-sm font-bold text-slate-700 dark:text-slate-200 whitespace-pre-wrap">
+            {value}
+          </p>
+        </div>
+      );
+    }
+
+    function Field({ label, children }) {
+      return (
+        <div>
+          <label className="block text-sm font-black text-slate-700 mb-1.5 dark:text-slate-300">
+            {label}
+          </label>
+          {children}
+        </div>
+      );
+    }
+
+    function Input({
+      label,
+      value,
+      onChange,
+      type = 'text',
+      placeholder = '',
+      required = false,
+      disabled = false
+    }) {
+      return (
+        <Field label={label}>
+          <input
+            type={type}
+            value={value}
+            required={required}
+            disabled={disabled}
+            placeholder={placeholder}
+            onChange={event => onChange(event.target.value)}
+            className={inputClassName() + (disabled ? ' opacity-60 cursor-not-allowed' : '')}
+          />
+        </Field>
+      );
+    }
+
+    function inputClassName() {
+      return 'w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-950 focus:border-slate-950 dark:border-slate-700 dark:bg-slate-950 dark:text-white dark:focus:ring-white dark:focus:border-white';
+    }
+
+    function Toast({ message }) {
+      return (
+        <div className="fixed top-5 left-1/2 z-[60] -translate-x-1/2 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white shadow-2xl dark:bg-white dark:text-slate-950">
+          {message}
+        </div>
+      );
+    }
+
+    function LoadingScreen({ text }) {
+      return (
+        <main className="min-h-screen flex items-center justify-center bg-slate-100 dark:bg-slate-950">
+          <div className="text-center page-enter">
+            <div className="w-11 h-11 rounded-full border-4 border-slate-300 border-t-slate-950 animate-spin mx-auto mb-4 dark:border-slate-700 dark:border-t-white"></div>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{text}</p>
+          </div>
+        </main>
+      );
+    }
+
+    function ErrorScreen({ message, onLogout }) {
+      return (
+        <main className="min-h-screen flex items-center justify-center bg-slate-100 px-4 dark:bg-slate-950">
+          <div className="w-full max-w-md rounded-3xl border border-red-200 bg-white p-6 text-center shadow-sm dark:border-red-500/20 dark:bg-slate-900">
+            <h1 className="text-xl font-black text-red-600 dark:text-red-300">
+              Dashboard Error
+            </h1>
+
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-2">
+              {message}
+            </p>
+
+            <button
+              onClick={onLogout}
+              className="mt-5 rounded-2xl bg-slate-950 px-5 py-3 text-sm font-bold text-white dark:bg-white dark:text-slate-950"
+            >
+              Back to Login
+            </button>
+          </div>
+        </main>
+      );
+    }
+
+    function LogoMark() {
+      return (
+        <div className="w-11 h-11 rounded-2xl bg-slate-950 text-white flex items-center justify-center font-black tracking-tight shadow-sm dark:bg-white dark:text-slate-950">
+          IM
+        </div>
+      );
+    }
+
+    function readStoredUser() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEYS.USER);
+
+        if (!raw) return null;
+
+        return JSON.parse(raw);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    function isSameSessionUser(userA, userB) {
+      if (!userA || !userB) return false;
+
+      return String(userA.username || '').toLowerCase() === String(userB.username || '').toLowerCase() &&
+        String(userA.role || '').toLowerCase() === String(userB.role || '').toLowerCase() &&
+        String(userA.branchId || '').toUpperCase() === String(userB.branchId || '').toUpperCase();
+    }
+
+    function normalizeInventoryItems(items) {
+      return (items || []).map(item => normalizeInventoryItem(item));
+    }
+
+    function normalizeInventoryItem(item) {
+      item = item || {};
+
+      const photoUrl = item.PhotoURL || item.photoUrl || '';
+      const photoFileId = item.PhotoFileID || item.photoFileId || extractDriveFileIdFromUrl(photoUrl);
+      const photoViewUrl = item.PhotoViewURL || item.photoViewUrl || buildDriveViewUrl(photoFileId);
+
+      return {
+        ...item,
+        CheckID: item.CheckID || item.checkId || '',
+        BranchID: item.BranchID || item.branchId || '',
+        BranchName: item.BranchName || item.branchName || '',
+        ItemName: item.ItemName || item.itemName || '',
+        Category: item.Category || item.category || '',
+        PurchaseDate: item.PurchaseDate || item.purchaseDate || '',
+        Quantity: item.Quantity !== undefined ? item.Quantity : (item.quantity || 0),
+        Unit: item.Unit || item.unit || '',
+        EstimatedPrice: item.EstimatedPrice !== undefined ? item.EstimatedPrice : (item.estimatedPrice || 0),
+        ActualPrice: item.ActualPrice !== undefined ? item.ActualPrice : (item.actualPrice || 0),
+        Vendor: item.Vendor || item.vendor || '',
+        PhotoURL: photoUrl,
+        PhotoFileID: photoFileId,
+        PhotoFileName: item.PhotoFileName || item.photoFileName || '',
+        PhotoMimeType: item.PhotoMimeType || item.photoMimeType || '',
+        PhotoSizeBytes: Number(item.PhotoSizeBytes || item.photoSizeBytes || 0),
+        PhotoViewURL: photoViewUrl,
+        Status: item.Status || item.status || 'Planned',
+        Notes: item.Notes || item.notes || '',
+        CreatedBy: item.CreatedBy || item.createdBy || '',
+        CreatedAt: item.CreatedAt || item.createdAt || '',
+        UpdatedAt: item.UpdatedAt || item.updatedAt || ''
+      };
+    }
+
+    function hasInventoryPhoto(item) {
+      return Boolean(
+        item &&
+        (
+          item.PhotoURL ||
+          item.PhotoViewURL ||
+          item.PhotoFileID ||
+          item.photoUrl ||
+          item.photoViewUrl ||
+          item.photoFileId
+        )
+      );
+    }
+
+    function getPhotoOpenUrl(item) {
+      if (!item) return '#';
+
+      return item.PhotoURL ||
+        item.photoUrl ||
+        item.PhotoViewURL ||
+        item.photoViewUrl ||
+        buildDriveViewUrl(item.PhotoFileID || item.photoFileId);
+    }
+
+    function buildDriveViewUrl(fileId) {
+      fileId = String(fileId || '').trim();
+
+      if (!fileId) return '';
+
+      return 'https://drive.google.com/uc?export=view&id=' + encodeURIComponent(fileId);
+    }
+
+    function extractDriveFileIdFromUrl(url) {
+      url = String(url || '').trim();
+
+      if (!url) return '';
+
+      let match = url.match(/\/file\/d\/([^/]+)/);
+
+      if (match && match[1]) {
+        return match[1];
+      }
+
+      match = url.match(/[?&]id=([^&]+)/);
+
+      if (match && match[1]) {
+        return decodeURIComponent(match[1]);
+      }
+
+      return '';
+    }
+
+    function clearStoredSession() {
+      localStorage.removeItem(STORAGE_KEYS.TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.USER);
+    }
+
+    function clearAllCache() {
+      Object.keys(localStorage).forEach(key => {
+        if (
+          key === STORAGE_KEYS.DASHBOARD_CACHE ||
+          key === STORAGE_KEYS.BRANCH_CACHE ||
+          key === STORAGE_KEYS.SETTINGS_CACHE ||
+          key.indexOf(STORAGE_KEYS.INVENTORY_CACHE_PREFIX) === 0
+        ) {
+          localStorage.removeItem(key);
+        }
+      });
+    }
+
+    function writeCache(key, data) {
+      try {
+        localStorage.setItem(key, JSON.stringify({
+          savedAt: Date.now(),
+          data: data
+        }));
+      } catch (error) {
+        console.warn('Cache write failed', error);
+      }
+    }
+
+    function readCache(key) {
+      try {
+        const raw = localStorage.getItem(key);
+
+        if (!raw) return null;
+
+        const parsed = JSON.parse(raw);
+
+        if (!parsed || !parsed.savedAt) return null;
+
+        const isExpired = Date.now() - parsed.savedAt > CACHE_TTL_MS;
+
+        if (isExpired) {
+          localStorage.removeItem(key);
+          return null;
+        }
+
+        return parsed.data || null;
+
+      } catch (error) {
+        localStorage.removeItem(key);
+        return null;
+      }
+    }
+
+    function getInventoryCacheKey(month, branchId) {
+      return STORAGE_KEYS.INVENTORY_CACHE_PREFIX + String(month || 'all') + '_' + String(branchId || 'ALL');
+    }
+
+    function countStatus(items, status) {
+      return (items || []).filter(item => item.Status === status).length;
+    }
+
+    function buildLocalInventorySummary(items) {
+      return {
+        total: items.length,
+        planned: countStatus(items, 'Planned'),
+        pending: countStatus(items, 'Pending'),
+        purchased: countStatus(items, 'Purchased'),
+        cancelled: countStatus(items, 'Cancelled')
+      };
+    }
+
+    function getTodayDate() {
+      return formatLocalDate(new Date());
+    }
+
+    function getCurrentMonth() {
+      const date = new Date();
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function formatLocalDate(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+
+      return `${year}-${month}-${day}`;
+    }
+
+    function normalizeDateOnly(value) {
+      if (!value) return '';
+
+      return String(value).substring(0, 10);
+    }
+
+    function buildCalendarDays(monthValue) {
+      const [year, month] = monthValue.split('-').map(Number);
+      const firstDate = new Date(year, month - 1, 1);
+      const lastDate = new Date(year, month, 0);
+      const startDay = firstDate.getDay();
+      const totalDays = lastDate.getDate();
+
+      const days = [];
+
+      for (let i = 0; i < startDay; i++) {
+        days.push({
+          date: '',
+          dayNumber: ''
+        });
+      }
+
+      for (let day = 1; day <= totalDays; day++) {
+        const date = new Date(year, month - 1, day);
+
+        days.push({
+          date: formatLocalDate(date),
+          dayNumber: day
+        });
+      }
+
+      while (days.length % 7 !== 0) {
+        days.push({
+          date: '',
+          dayNumber: ''
+        });
+      }
+
+      return days;
+    }
+
+    function formatDisplayDate(value) {
+      if (!value) return '-';
+
+      const [year, month, day] = value.split('-').map(Number);
+      const date = new Date(year, month - 1, day);
+
+      return date.toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    }
+
+    function formatCurrency(value) {
+      const numberValue = Number(value || 0);
+
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0
+      }).format(numberValue);
+    }
+
+    function formatCurrencyCompact(value) {
+      const numberValue = Number(value || 0);
+
+      if (Math.abs(numberValue) >= 1000000) {
+        return 'Rp' + (numberValue / 1000000).toFixed(1) + 'jt';
+      }
+
+      if (Math.abs(numberValue) >= 1000) {
+        return 'Rp' + (numberValue / 1000).toFixed(0) + 'rb';
+      }
+
+      return 'Rp' + numberValue.toFixed(0);
+    }
+
+    function formatBytes(bytes) {
+      const numberValue = Number(bytes || 0);
+
+      if (numberValue >= 1024 * 1024) {
+        return (numberValue / (1024 * 1024)).toFixed(2) + ' MB';
+      }
+
+      if (numberValue >= 1024) {
+        return (numberValue / 1024).toFixed(1) + ' KB';
+      }
+
+      return numberValue + ' B';
+    }
+
+    function compressImageFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+
+        reader.onerror = () => reject(new Error('Failed to read image file.'));
+
+        reader.onload = event => {
+          const image = new Image();
+
+          image.onerror = () => reject(new Error('Invalid image file.'));
+
+          image.onload = () => {
+            try {
+              let finalResult = null;
+
+              for (let i = 0; i < PHOTO_COMPRESSION_ATTEMPTS.length; i++) {
+                const attempt = PHOTO_COMPRESSION_ATTEMPTS[i];
+                const dimensions = calculateImageDimensions(
+                  image.width,
+                  image.height,
+                  attempt.maxWidth,
+                  attempt.maxHeight
+                );
+
+                const canvas = document.createElement('canvas');
+                canvas.width = dimensions.width;
+                canvas.height = dimensions.height;
+
+                const context = canvas.getContext('2d');
+
+                if (!context) {
+                  throw new Error('Image compression is not supported in this browser.');
+                }
+
+                context.drawImage(image, 0, 0, dimensions.width, dimensions.height);
+
+                const outputMimeType = 'image/jpeg';
+                const dataUrl = canvas.toDataURL(outputMimeType, attempt.quality);
+                const base64Data = dataUrl.split(',')[1] || '';
+                const sizeBytes = estimateBase64Bytes(base64Data);
+                const safeFileName = buildCompressedFileName(file.name);
+
+                finalResult = {
+                  base64Data: base64Data,
+                  mimeType: outputMimeType,
+                  fileName: safeFileName,
+                  previewUrl: dataUrl,
+                  sizeBytes: sizeBytes,
+                  width: dimensions.width,
+                  height: dimensions.height,
+                  quality: attempt.quality
+                };
+
+                if (sizeBytes <= PHOTO_MAX_COMPRESSED_BYTES) {
+                  resolve(finalResult);
+                  return;
+                }
+              }
+
+              reject(new Error(
+                'Photo is too large even after compression. Maximum compressed size is ' +
+                formatBytes(PHOTO_MAX_COMPRESSED_BYTES) +
+                '. Last result: ' +
+                formatBytes(finalResult ? finalResult.sizeBytes : 0) +
+                '.'
+              ));
+
+            } catch (error) {
+              reject(error);
+            }
+          };
+
+          image.src = event.target.result;
+        };
+
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function calculateImageDimensions(width, height, maxWidth, maxHeight) {
+      let nextWidth = width;
+      let nextHeight = height;
+
+      if (nextWidth > maxWidth) {
+        nextHeight = Math.round(nextHeight * (maxWidth / nextWidth));
+        nextWidth = maxWidth;
+      }
+
+      if (nextHeight > maxHeight) {
+        nextWidth = Math.round(nextWidth * (maxHeight / nextHeight));
+        nextHeight = maxHeight;
+      }
+
+      return {
+        width: nextWidth,
+        height: nextHeight
+      };
+    }
+
+    function estimateBase64Bytes(base64Data) {
+      const clean = String(base64Data || '').replace(/=/g, '');
+      return Math.floor(clean.length * 0.75);
+    }
+
+    function buildCompressedFileName(originalName) {
+      const cleanName = String(originalName || 'inventory-photo')
+        .replace(/\.[^.]+$/, '')
+        .replace(/\s+/g, '-')
+        .replace(/[^a-zA-Z0-9-_]/g, '')
+        .substring(0, 70) || 'inventory-photo';
+
+      return cleanName + '-compressed.jpg';
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

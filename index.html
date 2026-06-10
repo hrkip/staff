@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <title>Inventory Manager - Login</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            app: ['Inter', 'system-ui', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+
+  <style>
+    body {
+      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .page-enter {
+      animation: pageEnter 0.25s ease-out;
+    }
+
+    @keyframes pageEnter {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  </style>
+</head>
+
+<body class="bg-slate-100">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useEffect, useState } = React;
+
+    const STORAGE_KEYS = {
+      TOKEN: 'inventory_manager_token',
+      USER: 'inventory_manager_user',
+      REMEMBER_ME: 'inventory_manager_remember_me',
+      SAVED_USERNAME: 'inventory_manager_saved_username',
+      SAVED_PASSWORD: 'inventory_manager_saved_password'
+    };
+
+    const API_URL = "YOUR_NEW_WEB_APP_URL_HERE"; 
+
+    async function gasRun(functionName, ...args) {
+      try {
+        const response = await fetch(API_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/plain', 
+          },
+          body: JSON.stringify({ functionName, args }),
+          redirect: 'follow'
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return await response.json();
+      } catch (error) {
+        console.error("API Error:", error);
+        throw error;
+      }
+    }
+
+    function App() {
+      const [appConfig, setAppConfig] = useState({
+        name: 'Inventory Manager',
+        version: '1.0.0',
+        dashboardUrl: ''
+      });
+
+      const [loading, setLoading] = useState(true);
+
+      useEffect(() => {
+        bootLoginPage();
+      }, []);
+
+      async function bootLoginPage() {
+        try {
+          const configResponse = await gasRun('getAppConfig');
+
+          if (configResponse && configResponse.success) {
+            setAppConfig(configResponse.app);
+          }
+
+          const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
+
+          if (token) {
+            const sessionResponse = await gasRun('validateSession', token);
+
+            if (sessionResponse && sessionResponse.success) {
+              localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(sessionResponse.user));
+
+              const dashboardUrl = configResponse &&
+                configResponse.success &&
+                configResponse.app.dashboardUrl
+                ? configResponse.app.dashboardUrl
+                : 'dashboard.html';
+
+              window.location.href = dashboardUrl;
+              return;
+            }
+
+            clearStoredSession();
+          }
+
+        } catch (error) {
+          clearStoredSession();
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      if (loading) {
+        return <LoadingScreen text="Checking access..." />;
+      }
+
+      return <LoginPage appConfig={appConfig} />;
+    }
+
+    function LoginPage({ appConfig }) {
+      const savedRememberMe = localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === 'true';
+      const savedUsername = savedRememberMe
+        ? localStorage.getItem(STORAGE_KEYS.SAVED_USERNAME) || ''
+        : '';
+      const savedPassword = savedRememberMe
+        ? localStorage.getItem(STORAGE_KEYS.SAVED_PASSWORD) || ''
+        : '';
+
+      const [form, setForm] = useState({
+        username: savedUsername,
+        password: savedPassword,
+        rememberMe: savedRememberMe
+      });
+
+      const [loading, setLoading] = useState(false);
+      const [alert, setAlert] = useState(null);
+      const [showPassword, setShowPassword] = useState(false);
+
+      function updateField(field, value) {
+        setForm(prev => ({
+          ...prev,
+          [field]: value
+        }));
+      }
+
+      async function handleSubmit(event) {
+        event.preventDefault();
+
+        setLoading(true);
+        setAlert(null);
+
+        try {
+          const response = await gasRun('login', {
+            username: form.username,
+            password: form.password
+          });
+
+          if (response && response.success) {
+            localStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
+            localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(response.user));
+
+            if (form.rememberMe) {
+              localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
+              localStorage.setItem(STORAGE_KEYS.SAVED_USERNAME, form.username);
+              localStorage.setItem(STORAGE_KEYS.SAVED_PASSWORD, form.password);
+            } else {
+              clearRememberedLogin();
+            }
+
+            window.location.href = response.redirectUrl || appConfig.dashboardUrl || 'dashboard.html';
+            return;
+          }
+
+          setAlert({
+            type: 'error',
+            message: response ? response.message : 'Login failed.'
+          });
+
+        } catch (error) {
+          setAlert({
+            type: 'error',
+            message: error.message || 'Login failed.'
+          });
+
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      return (
+        <main className="min-h-screen flex items-center justify-center px-4 py-8">
+          <section className="w-full max-w-md page-enter">
+            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
+              <div className="px-6 pt-6 pb-5 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <LogoMark />
+
+                  <div>
+                    <h1 className="text-xl font-bold text-slate-950">
+                      {appConfig.name}
+                    </h1>
+                    <p className="text-sm text-slate-500">
+                      Login to manage inventory
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-6">
+                {alert && (
+                  <AlertBox
+                    type={alert.type}
+                    message={alert.message}
+                  />
+                )}
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <InputField
+                    label="Username"
+                    type="text"
+                    value={form.username}
+                    placeholder="Enter username"
+                    autoComplete="username"
+                    onChange={value => updateField('username', value)}
+                  />
+
+                  <PasswordField
+                    label="Password"
+                    value={form.password}
+                    placeholder="Enter password"
+                    autoComplete="current-password"
+                    showPassword={showPassword}
+                    onToggleVisibility={() => setShowPassword(prev => !prev)}
+                    onChange={value => updateField('password', value)}
+                  />
+
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="flex items-center gap-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={form.rememberMe}
+                        onChange={event => updateField('rememberMe', event.target.checked)}
+                        className="w-4 h-4 rounded border-slate-300 text-slate-950 focus:ring-slate-950"
+                      />
+
+                      <span className="text-sm font-medium text-slate-700">
+                        Remember me
+                      </span>
+                    </label>
+
+                    {form.rememberMe && (
+                      <span className="text-xs text-slate-400">
+                        Saved on this device
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={loading}
+                    className="w-full rounded-2xl bg-slate-950 text-white py-3 text-sm font-semibold hover:bg-slate-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                  >
+                    {loading ? 'Logging in...' : 'Login'}
+                  </button>
+                </form>
+
+                <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3">
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Database setup is handled from the backend. Run <b>setupDatabase()</b> once from Apps Script editor before first login.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <p className="text-center text-xs text-slate-400 mt-5">
+              {appConfig.name} · v{appConfig.version}
+            </p>
+          </section>
+        </main>
+      );
+    }
+
+    function LoadingScreen({ text }) {
+      return (
+        <main className="min-h-screen flex items-center justify-center bg-slate-100">
+          <div className="text-center page-enter">
+            <div className="w-11 h-11 rounded-full border-4 border-slate-300 border-t-slate-950 animate-spin mx-auto mb-4"></div>
+            <p className="text-sm text-slate-500">{text}</p>
+          </div>
+        </main>
+      );
+    }
+
+    function LogoMark() {
+      return (
+        <div className="w-11 h-11 rounded-2xl bg-slate-950 text-white flex items-center justify-center font-black tracking-tight shadow-sm">
+          IM
+        </div>
+      );
+    }
+
+    function InputField({
+      label,
+      type,
+      value,
+      placeholder,
+      autoComplete,
+      onChange
+    }) {
+      return (
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+            {label}
+          </label>
+
+          <input
+            type={type}
+            value={value}
+            placeholder={placeholder}
+            autoComplete={autoComplete}
+            required
+            onChange={event => onChange(event.target.value)}
+            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-950 focus:border-slate-950"
+          />
+        </div>
+      );
+    }
+
+    function PasswordField({
+      label,
+      value,
+      placeholder,
+      autoComplete,
+      showPassword,
+      onToggleVisibility,
+      onChange
+    }) {
+      return (
+        <div>
+          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
+            {label}
+          </label>
+
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={value}
+              placeholder={placeholder}
+              autoComplete={autoComplete}
+              required
+              onChange={event => onChange(event.target.value)}
+              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-20 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-950 focus:border-slate-950"
+            />
+
+            <button
+              type="button"
+              onClick={onToggleVisibility}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 hover:text-slate-950 transition"
+            >
+              {showPassword ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function AlertBox({ type, message }) {
+      const isError = type === 'error';
+
+      return (
+        <div
+          className={
+            'mb-4 rounded-2xl border px-4 py-3 text-sm ' +
+            (
+              isError
+                ? 'bg-red-50 border-red-200 text-red-700'
+                : 'bg-green-50 border-green-200 text-green-700'
+            )
+          }
+        >
+          {message}
+        </div>
+      );
+    }
+
+    function clearStoredSession() {
+      localStorage.removeItem(STORAGE_KEYS.TOKEN);
+      localStorage.removeItem(STORAGE_KEYS.USER);
+    }
+
+    function clearRememberedLogin() {
+      localStorage.removeItem(STORAGE_KEYS.REMEMBER_ME);
+      localStorage.removeItem(STORAGE_KEYS.SAVED_USERNAME);
+      localStorage.removeItem(STORAGE_KEYS.SAVED_PASSWORD);
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

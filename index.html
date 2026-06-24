@@ -1,57 +1,222 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
   <title>Inventory Manager - Login</title>
-
-  <script src="https://cdn.tailwindcss.com"></script>
-
-  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            app: ['Inter', 'system-ui', 'sans-serif']
-          }
-        }
-      }
-    };
-  </script>
-
   <style>
+    :root {
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --primary: #0f172a;
+      --primary-soft: #eef2ff;
+      --danger: #dc2626;
+      --success: #16a34a;
+      --shadow: 0 24px 70px rgba(15, 23, 42, .12);
+      --radius: 28px;
+    }
+
+    * { box-sizing: border-box; }
+
     body {
-      font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(15, 23, 42, .12), transparent 34rem),
+        linear-gradient(135deg, #f8fafc, var(--bg));
+      color: var(--text);
     }
 
-    .page-enter {
-      animation: pageEnter 0.25s ease-out;
+    .page {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
     }
 
-    @keyframes pageEnter {
-      from {
-        opacity: 0;
-        transform: translateY(8px);
-      }
-
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+    .login-card {
+      width: min(100%, 430px);
+      background: rgba(255,255,255,.92);
+      border: 1px solid rgba(226,232,240,.9);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(14px);
+      animation: enter .25s ease-out;
     }
+
+    @keyframes enter {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .header {
+      padding: 26px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .logo {
+      width: 48px;
+      height: 48px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-weight: 950;
+      letter-spacing: -.04em;
+      box-shadow: 0 12px 26px rgba(15,23,42,.2);
+      flex: 0 0 auto;
+    }
+
+    h1 { margin: 0; font-size: 22px; letter-spacing: -.03em; }
+    p { margin: 0; color: var(--muted); line-height: 1.55; }
+
+    .content { padding: 26px; }
+
+    .field { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 14px;
+      font-weight: 800;
+      color: #334155;
+    }
+
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 18px;
+      padding: 14px 15px;
+      font: inherit;
+      outline: none;
+      background: white;
+      color: var(--text);
+      transition: .18s ease;
+    }
+
+    input:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px rgba(15, 23, 42, .08);
+    }
+
+    .password-wrap { position: relative; }
+    .password-wrap input { padding-right: 74px; }
+
+    .show-btn {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 900;
+      cursor: pointer;
+      padding: 8px;
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 4px 0 18px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      user-select: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 750;
+      color: #334155;
+    }
+
+    .check input { width: 17px; height: 17px; }
+
+    .btn {
+      width: 100%;
+      border: 0;
+      border-radius: 18px;
+      background: var(--primary);
+      color: white;
+      padding: 14px 16px;
+      font: inherit;
+      font-weight: 900;
+      cursor: pointer;
+      transition: .18s ease;
+    }
+
+    .btn:hover { transform: translateY(-1px); background: #1e293b; }
+    .btn:disabled { opacity: .62; cursor: not-allowed; transform: none; }
+
+    .alert {
+      margin-bottom: 16px;
+      border-radius: 18px;
+      padding: 13px 14px;
+      font-size: 14px;
+      font-weight: 700;
+      border: 1px solid transparent;
+    }
+
+    .alert.error { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+    .alert.success { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+
+    .note {
+      margin-top: 20px;
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      border-radius: 20px;
+      padding: 14px;
+      font-size: 12px;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 18px;
+      color: #94a3b8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .spinner {
+      width: 45px;
+      height: 45px;
+      border-radius: 50%;
+      border: 4px solid #cbd5e1;
+      border-top-color: var(--primary);
+      animation: spin .75s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
+<body>
+  <main class="page" id="app">
+    <section class="login-card">
+      <div class="content" style="text-align:center;padding:40px 26px;">
+        <div class="spinner"></div>
+        <p><strong>Checking access...</strong></p>
+      </div>
+    </section>
+  </main>
 
-<body class="bg-slate-100">
-  <div id="root"></div>
+  <script>
+    'use strict';
 
-  <script type="text/babel">
-    const { useEffect, useState } = React;
+    const API_URL = 'https://script.google.com/macros/s/AKfycbwRbMy3R5nkaGy5GbER-5btpH88HJdNMHtkxMpuOYIvmwp9nakpD835o9buQW7F4Umo/exec';
 
     const STORAGE_KEYS = {
       TOKEN: 'inventory_manager_token',
@@ -61,350 +226,150 @@
       SAVED_PASSWORD: 'inventory_manager_saved_password'
     };
 
-    const API_URL = "https://script.google.com/macros/s/AKfycbwRbMy3R5nkaGy5GbER-5btpH88HJdNMHtkxMpuOYIvmwp9nakpD835o9buQW7F4Umo/exec"; 
+    const app = document.getElementById('app');
+    let appConfig = { name: 'Inventory Manager', version: '1.9.0', dashboardUrl: 'dashboard.html' };
+
+    document.addEventListener('DOMContentLoaded', bootLoginPage);
 
     async function gasRun(functionName, ...args) {
+      const response = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ functionName, args }),
+        redirect: 'follow'
+      });
+
+      if (!response.ok) throw new Error('HTTP error: ' + response.status);
+      return response.json();
+    }
+
+    async function bootLoginPage() {
       try {
-        const response = await fetch(API_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'text/plain', 
-          },
-          body: JSON.stringify({ functionName, args }),
-          redirect: 'follow'
-        });
-
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`);
+        const configResponse = await gasRun('getAppConfig');
+        if (configResponse && configResponse.success && configResponse.app) {
+          appConfig = Object.assign(appConfig, configResponse.app);
         }
 
-        return await response.json();
-      } catch (error) {
-        console.error("API Error:", error);
-        throw error;
-      }
-    }
-
-    function App() {
-      const [appConfig, setAppConfig] = useState({
-        name: 'Inventory Manager',
-        version: '1.0.0',
-        dashboardUrl: ''
-      });
-
-      const [loading, setLoading] = useState(true);
-
-      useEffect(() => {
-        bootLoginPage();
-      }, []);
-
-      async function bootLoginPage() {
-        try {
-          const configResponse = await gasRun('getAppConfig');
-
-          if (configResponse && configResponse.success) {
-            setAppConfig(configResponse.app);
-          }
-
-          const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
-
-          if (token) {
-            const sessionResponse = await gasRun('validateSession', token);
-
-            if (sessionResponse && sessionResponse.success) {
-              localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(sessionResponse.user));
-
-              const dashboardUrl = configResponse &&
-                configResponse.success &&
-                configResponse.app.dashboardUrl
-                ? configResponse.app.dashboardUrl
-                : 'dashboard.html';
-
-              window.location.href = dashboardUrl;
-              return;
-            }
-
-            clearStoredSession();
-          }
-
-        } catch (error) {
-          clearStoredSession();
-        } finally {
-          setLoading(false);
-        }
-      }
-
-      if (loading) {
-        return <LoadingScreen text="Checking access..." />;
-      }
-
-      return <LoginPage appConfig={appConfig} />;
-    }
-
-    function LoginPage({ appConfig }) {
-      const savedRememberMe = localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === 'true';
-      const savedUsername = savedRememberMe
-        ? localStorage.getItem(STORAGE_KEYS.SAVED_USERNAME) || ''
-        : '';
-      const savedPassword = savedRememberMe
-        ? localStorage.getItem(STORAGE_KEYS.SAVED_PASSWORD) || ''
-        : '';
-
-      const [form, setForm] = useState({
-        username: savedUsername,
-        password: savedPassword,
-        rememberMe: savedRememberMe
-      });
-
-      const [loading, setLoading] = useState(false);
-      const [alert, setAlert] = useState(null);
-      const [showPassword, setShowPassword] = useState(false);
-
-      function updateField(field, value) {
-        setForm(prev => ({
-          ...prev,
-          [field]: value
-        }));
-      }
-
-      async function handleSubmit(event) {
-        event.preventDefault();
-
-        setLoading(true);
-        setAlert(null);
-
-        try {
-          const response = await gasRun('login', {
-            username: form.username,
-            password: form.password
-          });
-
-          if (response && response.success) {
-            localStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
-            localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(response.user));
-
-            if (form.rememberMe) {
-              localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
-              localStorage.setItem(STORAGE_KEYS.SAVED_USERNAME, form.username);
-              localStorage.setItem(STORAGE_KEYS.SAVED_PASSWORD, form.password);
-            } else {
-              clearRememberedLogin();
-            }
-
-            window.location.href = response.redirectUrl || appConfig.dashboardUrl || 'dashboard.html';
+        const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
+        if (token) {
+          const sessionResponse = await gasRun('validateSession', token);
+          if (sessionResponse && sessionResponse.success) {
+            localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(sessionResponse.user));
+            window.location.href = appConfig.dashboardUrl || 'dashboard.html';
             return;
           }
-
-          setAlert({
-            type: 'error',
-            message: response ? response.message : 'Login failed.'
-          });
-
-        } catch (error) {
-          setAlert({
-            type: 'error',
-            message: error.message || 'Login failed.'
-          });
-
-        } finally {
-          setLoading(false);
+          clearStoredSession();
         }
+      } catch (error) {
+        clearStoredSession();
       }
 
-      return (
-        <main className="min-h-screen flex items-center justify-center px-4 py-8">
-          <section className="w-full max-w-md page-enter">
-            <div className="bg-white rounded-3xl shadow-xl border border-slate-200 overflow-hidden">
-              <div className="px-6 pt-6 pb-5 border-b border-slate-100">
-                <div className="flex items-center gap-3">
-                  <LogoMark />
+      renderLogin();
+    }
 
-                  <div>
-                    <h1 className="text-xl font-bold text-slate-950">
-                      {appConfig.name}
-                    </h1>
-                    <p className="text-sm text-slate-500">
-                      Login to manage inventory
-                    </p>
-                  </div>
-                </div>
-              </div>
+    function renderLogin(alert) {
+      const remember = localStorage.getItem(STORAGE_KEYS.REMEMBER_ME) === 'true';
+      const username = remember ? localStorage.getItem(STORAGE_KEYS.SAVED_USERNAME) || '' : '';
+      const password = remember ? localStorage.getItem(STORAGE_KEYS.SAVED_PASSWORD) || '' : '';
 
-              <div className="p-6">
-                {alert && (
-                  <AlertBox
-                    type={alert.type}
-                    message={alert.message}
-                  />
-                )}
-
-                <form onSubmit={handleSubmit} className="space-y-4">
-                  <InputField
-                    label="Username"
-                    type="text"
-                    value={form.username}
-                    placeholder="Enter username"
-                    autoComplete="username"
-                    onChange={value => updateField('username', value)}
-                  />
-
-                  <PasswordField
-                    label="Password"
-                    value={form.password}
-                    placeholder="Enter password"
-                    autoComplete="current-password"
-                    showPassword={showPassword}
-                    onToggleVisibility={() => setShowPassword(prev => !prev)}
-                    onChange={value => updateField('password', value)}
-                  />
-
-                  <div className="flex items-center justify-between gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={form.rememberMe}
-                        onChange={event => updateField('rememberMe', event.target.checked)}
-                        className="w-4 h-4 rounded border-slate-300 text-slate-950 focus:ring-slate-950"
-                      />
-
-                      <span className="text-sm font-medium text-slate-700">
-                        Remember me
-                      </span>
-                    </label>
-
-                    {form.rememberMe && (
-                      <span className="text-xs text-slate-400">
-                        Saved on this device
-                      </span>
-                    )}
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full rounded-2xl bg-slate-950 text-white py-3 text-sm font-semibold hover:bg-slate-800 transition disabled:opacity-60 disabled:cursor-not-allowed"
-                  >
-                    {loading ? 'Logging in...' : 'Login'}
-                  </button>
-                </form>
-
-                <div className="mt-6 rounded-2xl bg-slate-50 border border-slate-200 px-4 py-3">
-                  <p className="text-xs text-slate-500 leading-relaxed">
-                    Database setup is handled from the backend. Run <b>setupDatabase()</b> once from Apps Script editor before first login.
-                  </p>
-                </div>
-              </div>
+      app.innerHTML = `
+        <section class="login-card">
+          <div class="header">
+            <div class="logo">IM</div>
+            <div>
+              <h1>${escapeHtml(appConfig.name)}</h1>
+              <p>Login to manage inventory</p>
             </div>
-
-            <p className="text-center text-xs text-slate-400 mt-5">
-              {appConfig.name} · v{appConfig.version}
-            </p>
-          </section>
-        </main>
-      );
-    }
-
-    function LoadingScreen({ text }) {
-      return (
-        <main className="min-h-screen flex items-center justify-center bg-slate-100">
-          <div className="text-center page-enter">
-            <div className="w-11 h-11 rounded-full border-4 border-slate-300 border-t-slate-950 animate-spin mx-auto mb-4"></div>
-            <p className="text-sm text-slate-500">{text}</p>
           </div>
-        </main>
-      );
-    }
 
-    function LogoMark() {
-      return (
-        <div className="w-11 h-11 rounded-2xl bg-slate-950 text-white flex items-center justify-center font-black tracking-tight shadow-sm">
-          IM
-        </div>
-      );
-    }
+          <div class="content">
+            <div id="alertBox">${alert ? alertHtml(alert.type, alert.message) : ''}</div>
+            <form id="loginForm" autocomplete="on">
+              <div class="field">
+                <label for="username">Username</label>
+                <input id="username" name="username" type="text" placeholder="Enter username" value="${escapeAttr(username)}" autocomplete="username" required>
+              </div>
 
-    function InputField({
-      label,
-      type,
-      value,
-      placeholder,
-      autoComplete,
-      onChange
-    }) {
-      return (
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-            {label}
-          </label>
+              <div class="field">
+                <label for="password">Password</label>
+                <div class="password-wrap">
+                  <input id="password" name="password" type="password" placeholder="Enter password" value="${escapeAttr(password)}" autocomplete="current-password" required>
+                  <button class="show-btn" type="button" id="togglePassword">Show</button>
+                </div>
+              </div>
 
-          <input
-            type={type}
-            value={value}
-            placeholder={placeholder}
-            autoComplete={autoComplete}
-            required
-            onChange={event => onChange(event.target.value)}
-            className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-950 focus:border-slate-950"
-          />
-        </div>
-      );
-    }
+              <div class="row">
+                <label class="check" for="rememberMe">
+                  <input id="rememberMe" type="checkbox" ${remember ? 'checked' : ''}>
+                  Remember me
+                </label>
+                <small style="color:#94a3b8;font-weight:800;">${remember ? 'Saved on this device' : ''}</small>
+              </div>
 
-    function PasswordField({
-      label,
-      value,
-      placeholder,
-      autoComplete,
-      showPassword,
-      onToggleVisibility,
-      onChange
-    }) {
-      return (
-        <div>
-          <label className="block text-sm font-semibold text-slate-700 mb-1.5">
-            {label}
-          </label>
+              <button class="btn" id="loginButton" type="submit">Login</button>
+            </form>
 
-          <div className="relative">
-            <input
-              type={showPassword ? 'text' : 'password'}
-              value={value}
-              placeholder={placeholder}
-              autoComplete={autoComplete}
-              required
-              onChange={event => onChange(event.target.value)}
-              className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 pr-20 text-sm text-slate-900 outline-none transition focus:ring-2 focus:ring-slate-950 focus:border-slate-950"
-            />
-
-            <button
-              type="button"
-              onClick={onToggleVisibility}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-500 hover:text-slate-950 transition"
-            >
-              {showPassword ? 'Hide' : 'Show'}
-            </button>
+            <div class="note">
+              Database setup is handled from the backend. Run <b>setupDatabase()</b> once from Apps Script editor before first login.
+            </div>
           </div>
-        </div>
-      );
+        </section>
+        <div class="footer">${escapeHtml(appConfig.name)} · v${escapeHtml(appConfig.version || '1.9.0')}</div>
+      `;
+
+      document.getElementById('togglePassword').addEventListener('click', function () {
+        const input = document.getElementById('password');
+        const isHidden = input.type === 'password';
+        input.type = isHidden ? 'text' : 'password';
+        this.textContent = isHidden ? 'Hide' : 'Show';
+      });
+
+      document.getElementById('loginForm').addEventListener('submit', handleLogin);
     }
 
-    function AlertBox({ type, message }) {
-      const isError = type === 'error';
+    async function handleLogin(event) {
+      event.preventDefault();
 
-      return (
-        <div
-          className={
-            'mb-4 rounded-2xl border px-4 py-3 text-sm ' +
-            (
-              isError
-                ? 'bg-red-50 border-red-200 text-red-700'
-                : 'bg-green-50 border-green-200 text-green-700'
-            )
-          }
-        >
-          {message}
-        </div>
-      );
+      const button = document.getElementById('loginButton');
+      const alertBox = document.getElementById('alertBox');
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const remember = document.getElementById('rememberMe').checked;
+
+      button.disabled = true;
+      button.textContent = 'Logging in...';
+      alertBox.innerHTML = '';
+
+      try {
+        const response = await gasRun('login', { username, password });
+
+        if (!response || !response.success) {
+          alertBox.innerHTML = alertHtml('error', response ? response.message : 'Login failed.');
+          return;
+        }
+
+        localStorage.setItem(STORAGE_KEYS.TOKEN, response.token);
+        localStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(response.user));
+
+        if (remember) {
+          localStorage.setItem(STORAGE_KEYS.REMEMBER_ME, 'true');
+          localStorage.setItem(STORAGE_KEYS.SAVED_USERNAME, username);
+          localStorage.setItem(STORAGE_KEYS.SAVED_PASSWORD, password);
+        } else {
+          clearRememberedLogin();
+        }
+
+        window.location.href = response.redirectUrl || appConfig.dashboardUrl || 'dashboard.html';
+      } catch (error) {
+        alertBox.innerHTML = alertHtml('error', error.message || 'Login failed.');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Login';
+      }
+    }
+
+    function alertHtml(type, message) {
+      return `<div class="alert ${type === 'error' ? 'error' : 'success'}">${escapeHtml(message)}</div>`;
     }
 
     function clearStoredSession() {
@@ -418,7 +383,18 @@
       localStorage.removeItem(STORAGE_KEYS.SAVED_PASSWORD);
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    function escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function escapeAttr(value) {
+      return escapeHtml(value).replace(/`/g, '&#096;');
+    }
   </script>
 </body>
 </html>
